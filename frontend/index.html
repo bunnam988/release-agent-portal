@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Release Agent Portal</title>
+    <script>
+      // Applied synchronously, before anything renders -- avoids a flash
+      // of the wrong theme on load (the alternative, setting this from a
+      // React effect in useTheme.ts, only runs after first paint).
+      // Precedence matches useTheme.ts: explicit saved choice, else the
+      // OS's prefers-color-scheme, else dark (this app's original,
+      // always-was-dark default).
+      ;(function () {
+        var saved = localStorage.getItem('portal_theme')
+        var theme =
+          saved === 'light' || saved === 'dark'
+            ? saved
+            : window.matchMedia('(prefers-color-scheme: light)').matches
+              ? 'light'
+              : 'dark'
+        document.documentElement.setAttribute('data-theme', theme)
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

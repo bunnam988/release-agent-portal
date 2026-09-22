@@ -1,0 +1,143 @@
+services:
+  opencode-server:
+    build:
+      # release-agent is a git submodule nested here (not a sibling
+      # directory) specifically so this whole repo is self-contained for
+      # a CI/CD pipeline that only checks out release-agent-portal --
+      # `git clone --recurse-submodules` (or `git submodule update --init
+      # --recursive` after a plain clone) pulls it in at build time. It's
+      # still its own standalone repo (github.com/bunnam988/release-agent)
+      # for anyone who just wants the opencode skills without the portal.
+      context: ./release-agent
+      dockerfile: Dockerfile
+    environment:
+      # Set to enable basic auth (also set PORTAL_OPENCODE_PASSWORD below
+      # to match). Left blank for local testing.
+      - OPENCODE_SERVER_PASSWORD=
+      # Overrides the Dockerfile's placeholder git commit identity (these
+      # env vars take precedence over git config for every git command --
+      # must never be passed as an empty string, git treats that as a
+      # real, invalid identity rather than falling back). Reads from the
+      # HOST's own shell environment if set there, otherwise falls back to
+      # the same obvious placeholder as the Dockerfile default -- on
+      # purpose, so an unconfigured deployment is immediately visibly
+      # wrong rather than quietly passing for a real value.
+      #
+      # CURRENT INTERIM STATE (see DESIGN.md "Credential status"): no
+      # dedicated service account exists yet for GitHub/Gerrit, so this
+      # deployment intentionally runs on a specific person's own
+      # credentials for now, same as GitHub/Gerrit below -- export these on
+      # the host (e.g. GIT_AUTHOR_NAME="Your Name",
+      # GIT_AUTHOR_EMAIL="you@example.com") before `docker compose up` so
+      # commits are attributed to that same person rather than left at the
+      # placeholder.
+      #
+      # ONCE A REAL SERVICE ACCOUNT EXISTS: switch these to a dedicated bot
+      # identity instead (e.g. "RDK Release Agent" + a real, monitored team
+      # address) -- NOT an individual's name. The portal's own login +
+      # audit log already records who triggered a run; commit authorship
+      # should reflect what performed the action, not who asked for it.
+      # See docker-entrypoint.sh's startup check (it only catches the
+      # unconfigured placeholder, not a person's name left here on
+      # purpose during this interim phase).
+      - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-RDK Release Agent (REPLACE BEFORE DEPLOY)}
+      - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-replace-me@example.com}
+      - GIT_COMMITTER_NAME=${GIT_COMMITTER_NAME:-RDK Release Agent (REPLACE BEFORE DEPLOY)}
+      - GIT_COMMITTER_EMAIL=${GIT_COMMITTER_EMAIL:-replace-me@example.com}
+    volumes:
+      # Persist incremental run state across container restarts, mirroring
+      # the PVC mount CNAP would provide. See DESIGN.md "Data Storage".
+      - release-agent-state:/workspace/.stable2-meta-sync
+      # INTERIM (personal credential, see DESIGN.md "Credential status"):
+      # named volume so `opencode providers login` run once inside this
+      # container persists across restarts instead of needing to re-login
+      # every time. Copying a host's auth.json in read-only does NOT work —
+      # opencode needs to refresh/rewrite the token file. Swap to a real
+      # non-interactive credential once Comcast's Copilot admins provide
+      # one — see DESIGN.md "Swapping to service accounts later".
+      - opencode-auth:/root/.local/share/opencode
+      # Real service account, not interim: jira-ccp MCP is no longer used
+      # by anything in this project (every Jira-touching skill was
+      # migrated onto scripts/jira_rest.py / ccp_jira.env below instead —
+      # see DESIGN.md "Credential status"). This mount is dead and can be
+      # removed; left commented out rather than deleted outright in case
+      # some future workflow needs MCP again.
+      # - ${HOME}/.local/share/opencode/mcp-auth.json:/root/.local/share/opencode/mcp-auth.json
+      # INTERIM (personal credential): named volume for `gh auth login`
+      # done once inside this container (mirrors the opencode-auth pattern
+      # above -- linux gh has no OS keyring, so it stores the token in this
+      # config dir directly). Swap to a real GitHub service account/App
+      # install once one exists — see DESIGN.md "Swapping to service
+      # accounts later".
+      - gh-auth:/root/.config/gh
+      # INTERIM (personal credential): reuse the deployer's own Gerrit
+      # HTTPS credentials for on-demand-cherry-pick / gerrit-cherrypick-squash.
+      # Read-only: this workflow only reads netrc, never rewrites it.
+      #
+      # Deliberately NOT mounting ~/.netrc directly: that file also has
+      # multiple `machine github.com` entries (personal accounts,
+      # comcast-linked accounts, etc.) which took priority over gh's own
+      # credential helper and caused git to authenticate GitHub pushes as
+      # the WRONG identity (one without org write access) even though
+      # `gh auth status` showed the correct, permitted account. Regenerate
+      # this filtered file any time the Gerrit HTTP password rotates:
+      #   grep gerrit.teamccp.com ~/.netrc > ~/.release-agent-portal/gerrit.netrc
+      #
+      # Swap to a real Gerrit service-account credential once one exists —
+      # see DESIGN.md "Swapping to service accounts later".
+      - ${HOME}/.release-agent-portal/gerrit.netrc:/root/.netrc:ro
+      # Real service account, not interim: jira-pr-lookup (and every other
+      # Jira-touching skill) requires ccp_jira.env in the working
+      # directory -- a real CCP Jira REST service-account token
+      # (svc-autotriage), verified with full EDIT_ISSUES/LINK_ISSUE/
+      # CREATE_ISSUES permissions. This file would exist on disk in
+      # ./release-agent if you'd copied ccp_jira.env.template there
+      # yourself, but it's never baked into the image (deliberately --
+      # see release-agent/.dockerignore, credential files must never ship
+      # in the image) and never committed to the submodule either, so it
+      # needs this explicit mount. Read-only: skills only read it.
+      - ./release-agent/ccp_jira.env:/workspace/ccp_jira.env:ro
+    expose:
+      - "4096"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - PORTAL_OPENCODE_URL=http://opencode-server:4096
+      - PORTAL_OPENCODE_USERNAME=opencode
+      - PORTAL_OPENCODE_PASSWORD=
+      - PORTAL_CORS_ORIGINS=http://localhost:5173,http://localhost:8080
+      # Two shared passwords gating the portal, one per role -- admin gets
+      # every workflow, user only the ones marked admin_only=False in
+      # backend/app/workflows.py (today: on-demand-cherry-pick). Both
+      # unset/blank on the host = auth disabled entirely (today's
+      # open-access behavior) -- deliberately using the bare "pass
+      # through from host env, or omit" form here, NOT "=${VAR:-}", since
+      # that would set an empty string in the container and silently
+      # override config.py's safe default secret with an empty one. Set
+      # these on the host before relying on this anywhere beyond a laptop
+      # -- PORTAL_SESSION_SECRET must be a real random value or anyone
+      # can forge a valid login cookie.
+      - PORTAL_ADMIN_PASSWORD
+      - PORTAL_USER_PASSWORD
+      - PORTAL_SESSION_SECRET
+    depends_on:
+      - opencode-server
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  release-agent-state:
+  opencode-auth:
+  gh-auth:

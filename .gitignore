@@ -1,0 +1,24 @@
+# Node (frontend)
+node_modules/
+dist/
+*.log
+
+# Python (backend)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.ruff_cache/
+
+# macOS
+.DS_Store
+._*
+
+# VS Code
+.vscode/
+
+# Env files -- credentials are passed as env vars at `docker compose up`
+# time (see docker-compose.yml's own comments) or mounted from files
+# outside this repo, never committed here.
+*.env
+.env*
