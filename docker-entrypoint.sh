@@ -22,6 +22,46 @@ cd /workspace
 # explanation of why this specifically needs re-running every start.
 gh auth setup-git 2>/dev/null || true
 
+# See deploy-credentials/README.md. Two tiers, highest priority first:
+#   1. Runtime volume mount (local docker-compose.yml) -- always wins,
+#      already in place by the time this script runs.
+#   2. Baked into the image at build time (this deployment's approach on
+#      CNAP -- see DESIGN.md "Credential status" for the accepted
+#      trade-off vs. a real CNAP secret mechanism).
+# Placed BEFORE the git-identity check below, deliberately: that check
+# reads GIT_AUTHOR_NAME, which for this deployment approach only ever
+# gets set by config.env sourced here -- checking it first would always
+# see it unset and print a false warning even though the real value
+# gets set moments later.
+_maybe_use_baked_credential() {
+  src="/opt/deploy-credentials/$1"
+  dest="$2"
+  if [ -f "$src" ] && [ ! -f "$dest" ]; then
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+    echo "Using baked-in credential for $dest (no runtime mount provided one)"
+  fi
+}
+_maybe_use_baked_credential "ccp_jira.env" "/workspace/ccp_jira.env"
+_maybe_use_baked_credential "gerrit.netrc" "/root/.netrc"
+_maybe_use_baked_credential "gh-hosts.yml" "/root/.config/gh/hosts.yml"
+_maybe_use_baked_credential "opencode-auth.json" "/root/.local/share/opencode/auth.json"
+
+# Same two-tier priority for the portal config values (passwords,
+# session secret, git identity) -- only sets a var from the baked-in
+# file if it isn't already set (e.g. by a real env var some other way),
+# so a real value always wins over the baked-in one.
+if [ -f /opt/deploy-credentials/config.env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . <(grep -v '^\s*#' /opt/deploy-credentials/config.env | while IFS='=' read -r k v; do
+        [ -z "$k" ] && continue
+        eval "current=\${$k:-}"
+        [ -z "$current" ] && echo "$k=$v"
+      done)
+  set +a
+fi
+
 # Loud warning if the git commit identity is still the unconfigured
 # placeholder (see release-agent/Dockerfile / docker-compose.yml).
 #
@@ -45,61 +85,6 @@ case "$current_name" in
     echo "=================================================================="
     ;;
 esac
-
-# On CNAP: these 4 files arrive via a WebService `serviceClaims` entry
-# of type `servicebinding.io` (see cnap-webservice.yaml + cnap-secret.yaml),
-# which mounts each key of a Secret as a file. The exact root directory
-# was never explicitly confirmed in CNAP's own docs -- /bindings is the
-# CNCF servicebinding.io spec's own default, but that same spec says a
-# workload should respect a SERVICE_BINDING_ROOT env var if the platform
-# sets one, rather than hardcode the default. Respecting both here since
-# there's no confirmation yet of which one CNAP actually does. Locally
-# (docker-compose.yml), neither path exists at all, so this loop is a
-# silent no-op and the existing runtime volume mounts are the only thing
-# that ever provides these -- completely unaffected either way.
-_binding_root="${SERVICE_BINDING_ROOT:-/bindings}"
-_maybe_use_bound_credential() {
-  src="$_binding_root/creds-files/$1"
-  dest="$2"
-  if [ -f "$src" ] && [ ! -f "$dest" ]; then
-    mkdir -p "$(dirname "$dest")"
-    cp "$src" "$dest"
-    echo "Using CNAP-bound credential for $dest (from $src)"
-  fi
-}
-_maybe_use_bound_credential "ccp-jira-env" "/workspace/ccp_jira.env"
-_maybe_use_bound_credential "gerrit-netrc" "/root/.netrc"
-_maybe_use_bound_credential "gh-hosts-yml" "/root/.config/gh/hosts.yml"
-_maybe_use_bound_credential "opencode-auth-json" "/root/.local/share/opencode/auth.json"
-
-# Diagnostic only, never fatal -- if this specific binding root exists
-# at all but none of the 4 expected files were found under it, print
-# what's actually there so the next failure (if any) is fast to debug
-# instead of another guess-and-check round trip.
-if [ -d "$_binding_root" ] && [ ! -f "/workspace/ccp_jira.env" ]; then
-  echo "NOTE: $_binding_root exists but expected credential files weren't found under it. Actual contents:"
-  find "$_binding_root" 2>/dev/null || true
-fi
-
-# TEMPORARY, see deploy-credentials/README.md -- last-resort fallback,
-# lowest priority of all three: only used if neither a runtime mount
-# (local) nor the CNAP servicebinding.io mount above already provided a
-# real credential. Once the servicebinding.io mount path is confirmed
-# and working, this becomes dead weight and deploy-credentials/ can be
-# removed entirely.
-_maybe_use_baked_credential() {
-  src="/opt/deploy-credentials/$1"
-  dest="$2"
-  if [ -f "$src" ] && [ ! -f "$dest" ]; then
-    mkdir -p "$(dirname "$dest")"
-    cp "$src" "$dest"
-    echo "Using baked-in credential for $dest (no runtime mount or CNAP binding provided one)"
-  fi
-}
-_maybe_use_baked_credential "ccp_jira.env" "/workspace/ccp_jira.env"
-_maybe_use_baked_credential "gerrit.netrc" "/root/.netrc"
-_maybe_use_baked_credential "gh-hosts.yml" "/root/.config/gh/hosts.yml"
-_maybe_use_baked_credential "opencode-auth.json" "/root/.local/share/opencode/auth.json"
 
 opencode serve --hostname 127.0.0.1 --port 4096 &
 OPENCODE_PID=$!

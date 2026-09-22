@@ -571,16 +571,7 @@ step, not a code change:
 Read `cnap.comcast.net/cnap`'s own docs (Microservices Journey -> Advanced
 Topics -> API Reference -> WebService, and its Sample Manifest pages) --
 this is CNAP's real, public-facing documentation site, not a login-gated
-dashboard. Resolved from there, and now implemented in `cnap-webservice.yaml`
-+ `cnap-secret.yaml.template`:
-- **Secrets do have a real mechanism**: a plain Kubernetes `Secret` +
-  a `WebService`'s `serviceClaims`, with `type: env` (environment
-  variables) or `type: servicebinding.io` (mounts each Secret key as a
-  file under `/bindings/<claim-name>/<key>`). Deliberately did **not**
-  fall back to baking credentials into the image once this was
-  confirmed -- that fallback (briefly implemented, then reverted) was a
-  real, worse trade-off only worth accepting if no proper secret
-  mechanism existed at all.
+dashboard. Resolved from there:
 - `spec.regions` is **required** (valid: `wc`/`po`/`ho`/`as`/`ch`) --
   was missing from every earlier draft of this manifest.
 - `spec.ingress.public` defaults to `false` -- confirms `WebService`
@@ -588,6 +579,37 @@ dashboard. Resolved from there, and now implemented in `cnap-webservice.yaml`
 - `spec.autoscale` defaults to `min: 1, max: 10` if the block is present
   but incomplete -- set explicitly to `{min: 1, max: 1}` rather than
   omitting the block and trusting an unconfirmed default.
+- Secrets do have a real mechanism: a plain Kubernetes `Secret` + a
+  `WebService`'s `serviceClaims`, with `type: env` (environment
+  variables) or `type: servicebinding.io` (mounts each Secret key as a
+  file). First implemented this way (`cnap-secret.yaml.template` +
+  `serviceClaims` in `cnap-webservice.yaml`) and initially preferred over
+  baking credentials into the image for exactly that security reason.
+
+### Secrets mechanism: reverted from `serviceClaims` to baked-in, after real deployment friction
+
+A live deployment attempt using `serviceClaims` hit a real, confirmed
+error (AI diagnosis: `APPLICATION_INVALID_SECRET_REF`) -- fixed once
+(CNAP's controller generates an intermediate `<webservice>-<claim>-bind`
+secret; `secretKeyRef.name` must reference that, not the raw `Secret`
+name). Separately, the `servicebinding.io` file-mount path
+(`/bindings/<claim>/<key>`) was never explicitly confirmed by CNAP's
+docs, only inferred from the `servicebinding.io` naming convention
+matching the CNCF spec -- genuine, untested risk.
+
+Given a teammate's own working CNAP deployment (`jira_autotriage`) uses
+neither mechanism at all (credentials committed directly into its git
+source instead -- see the credential-leak incident referenced earlier in
+this doc), and given the ongoing friction getting `serviceClaims` working
+end-to-end, the decision was made to bake credentials into the image
+instead (see `deploy-credentials/README.md`) -- a real, accepted
+security trade-off (worse than `serviceClaims`, better than committing to
+git), prioritizing getting a working deployment over the more secure
+mechanism for now. `cnap-secret.yaml.template` and the `serviceClaims`
+approach remain in git history and as an unused template, to revert to
+once there's time/support to get the `servicebinding.io` mount path
+question answered definitively (e.g. via CNAP's own Slack support
+channel, referenced in that AI diagnosis's remediation text).
 
 ### Open items still outside code (CNAP/infra-owner's call, not mine)
 

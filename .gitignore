@@ -28,8 +28,8 @@ __pycache__/
 cnap-secret.yaml
 
 # deploy-credentials/ -- real credential files staged here as a
-# temporary last-resort fallback (see that directory's own README.md).
-# ccp_jira.env is already covered by *.env above; these are the other
+# fallback (see that directory's own README.md). config.env and
+# ccp_jira.env are already covered by *.env above; these are the other
 # three. Never commit the real files.
 deploy-credentials/gerrit.netrc
 deploy-credentials/gh-hosts.yml

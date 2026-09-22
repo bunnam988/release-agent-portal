@@ -104,28 +104,28 @@ setting up opencode-server, all as part of the same build.
 
 ## Deploying to CNAP
 
-`cnap-webservice.yaml` + `cnap-secret.yaml.template` are ready to use —
-schema confirmed directly against `cnap.comcast.net/cnap`'s own API
-reference and sample manifests, not guessed:
+`cnap-webservice.yaml` is ready to use as-is — no separate `Secret`
+manifest needed. All credentials (the 4 files, plus portal
+passwords/session secret/git identity) are baked into the image at
+build time instead — see `deploy-credentials/README.md` for exactly how,
+and `DESIGN.md`'s "Credential status" for the accepted trade-off (this
+mirrors a teammate's own working CNAP deployment pattern, adopted after
+the `serviceClaims`/`servicebinding.io` approach hit real, unresolved
+friction in a live deployment attempt).
 
-1. Copy `cnap-secret.yaml.template` to `cnap-secret.yaml` (gitignored —
-   never commit the real one) and fill in the real values (the 4
-   credential files' full contents, the portal passwords, a real random
-   session secret, your git identity).
-2. `kubectl apply -f cnap-secret.yaml -n corenw-att` — the `WebService`
-   references these by name, so they need to exist first.
+1. Place the 5 real files in `deploy-credentials/` (see that directory's
+   README for exact names/formats) — never commit them.
+2. Build and push the image (see "Building the image for deployment"
+   above) — the credentials get baked in as part of this build.
 3. `kubectl apply -f cnap-webservice.yaml -n corenw-att`.
 
-How the credentials actually get into the container: the 4 files
-(`ccp_jira.env`, `gerrit.netrc`, `gh-hosts.yml`, `opencode-auth.json`) are
-claimed via `serviceClaims` with `type: servicebinding.io`, which mounts
-each Secret key as a file under `/bindings/creds-files/<key>` —
-`docker-entrypoint.sh` copies them from there into the paths this app
-actually expects, **only if** a runtime volume mount (the local
-`docker-compose.yml` path) hasn't already provided a real one, so this
-doesn't affect local dev at all. `PORTAL_ADMIN_PASSWORD`,
-`PORTAL_SESSION_SECRET`, and the git-identity vars go straight in as env
-vars via `env[].valueFrom.secretKeyRef`.
+`docker-entrypoint.sh` always prefers a real runtime volume mount (the
+local `docker-compose.yml` path) over the baked-in fallback, so none of
+this affects local dev.
+
+`cnap-secret.yaml.template` is still in the repo as a reference for
+reverting to the more secure `Secret`/`serviceClaims` approach later, but
+isn't used by the current manifest.
 
 Other notes for whoever deploys this:
 - Only **one** container needs a public route/ingress — there's only one

@@ -1,6 +1,15 @@
-# Apply cnap-secret.yaml (from cnap-secret.yaml.template) BEFORE this --
-# the serviceClaims below reference those Secrets by name, which must
-# already exist.
+# No serviceClaims / no Secret manifest needed for this deployment
+# approach -- all credentials (GitHub/Gerrit/Jira/Copilot files, plus
+# portal passwords/session secret/git identity) are baked into the
+# image at build time instead (see deploy-credentials/README.md and
+# DESIGN.md "Credential status" for the accepted trade-off). This
+# mirrors a teammate's own working CNAP deployment pattern
+# (jira_autotriage), after the serviceClaims/servicebinding.io path hit
+# real, unresolved friction in a live deployment attempt
+# (APPLICATION_INVALID_SECRET_REF, plus an unconfirmed mount-path
+# question) -- cnap-secret.yaml.template is kept in the repo as a
+# reference for reverting to the more-secure approach later, but is not
+# used by this manifest.
 #
 # Schema confirmed against cnap.comcast.net/cnap (Microservices Journey ->
 # Advanced Topics -> API Reference -> WebService, and -> Sample Manifest)
@@ -47,75 +56,3 @@ spec:
   autoscale:
     min: 1
     max: 1
-
-  # Plain values, plus secret-backed ones via valueFrom.secretKeyRef.
-  #
-  # IMPORTANT, learned from a real failed deployment (AI diagnosis:
-  # APPLICATION_INVALID_SECRET_REF): you CANNOT reference the raw Secret
-  # named in a serviceClaims entry directly. CNAP's serviceClaims
-  # controller generates a separate, intermediate secret and THAT'S what
-  # secretKeyRef.name must point to, named
-  # "<webservice-name>-<serviceclaim-name>-bind" -- here,
-  # "release-agent-portal" (metadata.name) + "creds-config"
-  # (serviceClaims[].name) = "release-agent-portal-creds-config-bind".
-  # Referencing "release-agent-portal-config" (the raw Secret's own
-  # name) directly, as an earlier version of this file did, fails with
-  # CreateContainerConfigError since Kubernetes never sees a secret by
-  # that exact name -- only the "-bind" one the claim generates.
-  env:
-    - name: PORTAL_ADMIN_PASSWORD
-      valueFrom:
-        secretKeyRef:
-          name: release-agent-portal-creds-config-bind
-          key: portal-admin-password
-    - name: PORTAL_USER_PASSWORD
-      valueFrom:
-        secretKeyRef:
-          name: release-agent-portal-creds-config-bind
-          key: portal-user-password
-    - name: PORTAL_SESSION_SECRET
-      valueFrom:
-        secretKeyRef:
-          name: release-agent-portal-creds-config-bind
-          key: portal-session-secret
-    - name: GIT_AUTHOR_NAME
-      valueFrom:
-        secretKeyRef:
-          name: release-agent-portal-creds-config-bind
-          key: git-author-name
-    - name: GIT_AUTHOR_EMAIL
-      valueFrom:
-        secretKeyRef:
-          name: release-agent-portal-creds-config-bind
-          key: git-author-email
-    - name: GIT_COMMITTER_NAME
-      valueFrom:
-        secretKeyRef:
-          name: release-agent-portal-creds-config-bind
-          key: git-author-name
-    - name: GIT_COMMITTER_EMAIL
-      valueFrom:
-        secretKeyRef:
-          name: release-agent-portal-creds-config-bind
-          key: git-author-email
-
-  # type: servicebinding.io mounts each key of the target Secret as a
-  # file under /bindings/<claim-name>/<key> -- docker-entrypoint.sh
-  # copies these into the paths this app actually expects
-  # (/workspace/ccp_jira.env, /root/.netrc, etc), falling back to
-  # nothing (silent no-op) if this path doesn't exist, which is exactly
-  # the local docker-compose case.
-  serviceClaims:
-    - name: creds-files
-      service:
-        kind: Secret
-        name: release-agent-portal-files
-      type: servicebinding.io
-    # Also claim the config secret with type: env -- per CNAP's docs,
-    # only a secret referenced by *some* serviceClaims entry can be used
-    # via env[].valueFrom.secretKeyRef above.
-    - name: creds-config
-      service:
-        kind: Secret
-        name: release-agent-portal-config
-      type: env
