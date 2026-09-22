@@ -67,6 +67,13 @@ COPY backend/app ./app
 # this Docker build).
 COPY --from=frontend-build /app/dist /app/frontend/dist
 
+# TEMPORARY, see deploy-credentials/README.md -- last-resort fallback,
+# only used if neither a runtime mount (local) nor a CNAP
+# servicebinding.io mount (once confirmed working) already provided a
+# real credential. Copying the whole directory always succeeds even if
+# it only contains the README.
+COPY deploy-credentials/ /opt/deploy-credentials/
+
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 

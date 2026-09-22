@@ -81,6 +81,26 @@ if [ -d "$_binding_root" ] && [ ! -f "/workspace/ccp_jira.env" ]; then
   find "$_binding_root" 2>/dev/null || true
 fi
 
+# TEMPORARY, see deploy-credentials/README.md -- last-resort fallback,
+# lowest priority of all three: only used if neither a runtime mount
+# (local) nor the CNAP servicebinding.io mount above already provided a
+# real credential. Once the servicebinding.io mount path is confirmed
+# and working, this becomes dead weight and deploy-credentials/ can be
+# removed entirely.
+_maybe_use_baked_credential() {
+  src="/opt/deploy-credentials/$1"
+  dest="$2"
+  if [ -f "$src" ] && [ ! -f "$dest" ]; then
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+    echo "Using baked-in credential for $dest (no runtime mount or CNAP binding provided one)"
+  fi
+}
+_maybe_use_baked_credential "ccp_jira.env" "/workspace/ccp_jira.env"
+_maybe_use_baked_credential "gerrit.netrc" "/root/.netrc"
+_maybe_use_baked_credential "gh-hosts.yml" "/root/.config/gh/hosts.yml"
+_maybe_use_baked_credential "opencode-auth.json" "/root/.local/share/opencode/auth.json"
+
 opencode serve --hostname 127.0.0.1 --port 4096 &
 OPENCODE_PID=$!
 

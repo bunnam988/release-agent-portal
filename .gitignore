@@ -26,3 +26,11 @@ __pycache__/
 # The real, filled-in version of the CNAP secrets manifest -- only the
 # .template (placeholders only) is ever tracked.
 cnap-secret.yaml
+
+# deploy-credentials/ -- real credential files staged here as a
+# temporary last-resort fallback (see that directory's own README.md).
+# ccp_jira.env is already covered by *.env above; these are the other
+# three. Never commit the real files.
+deploy-credentials/gerrit.netrc
+deploy-credentials/gh-hosts.yml
+deploy-credentials/opencode-auth.json
