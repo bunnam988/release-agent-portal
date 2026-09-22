@@ -48,44 +48,55 @@ spec:
     min: 1
     max: 1
 
-  # Plain values, plus secret-backed ones via valueFrom.secretKeyRef --
-  # only secrets referenced by a serviceClaims entry below can be used
-  # this way (confirmed in CNAP's own docs).
+  # Plain values, plus secret-backed ones via valueFrom.secretKeyRef.
+  #
+  # IMPORTANT, learned from a real failed deployment (AI diagnosis:
+  # APPLICATION_INVALID_SECRET_REF): you CANNOT reference the raw Secret
+  # named in a serviceClaims entry directly. CNAP's serviceClaims
+  # controller generates a separate, intermediate secret and THAT'S what
+  # secretKeyRef.name must point to, named
+  # "<webservice-name>-<serviceclaim-name>-bind" -- here,
+  # "release-agent-portal" (metadata.name) + "creds-config"
+  # (serviceClaims[].name) = "release-agent-portal-creds-config-bind".
+  # Referencing "release-agent-portal-config" (the raw Secret's own
+  # name) directly, as an earlier version of this file did, fails with
+  # CreateContainerConfigError since Kubernetes never sees a secret by
+  # that exact name -- only the "-bind" one the claim generates.
   env:
     - name: PORTAL_ADMIN_PASSWORD
       valueFrom:
         secretKeyRef:
-          name: release-agent-portal-config
+          name: release-agent-portal-creds-config-bind
           key: portal-admin-password
     - name: PORTAL_USER_PASSWORD
       valueFrom:
         secretKeyRef:
-          name: release-agent-portal-config
+          name: release-agent-portal-creds-config-bind
           key: portal-user-password
     - name: PORTAL_SESSION_SECRET
       valueFrom:
         secretKeyRef:
-          name: release-agent-portal-config
+          name: release-agent-portal-creds-config-bind
           key: portal-session-secret
     - name: GIT_AUTHOR_NAME
       valueFrom:
         secretKeyRef:
-          name: release-agent-portal-config
+          name: release-agent-portal-creds-config-bind
           key: git-author-name
     - name: GIT_AUTHOR_EMAIL
       valueFrom:
         secretKeyRef:
-          name: release-agent-portal-config
+          name: release-agent-portal-creds-config-bind
           key: git-author-email
     - name: GIT_COMMITTER_NAME
       valueFrom:
         secretKeyRef:
-          name: release-agent-portal-config
+          name: release-agent-portal-creds-config-bind
           key: git-author-name
     - name: GIT_COMMITTER_EMAIL
       valueFrom:
         secretKeyRef:
-          name: release-agent-portal-config
+          name: release-agent-portal-creds-config-bind
           key: git-author-email
 
   # type: servicebinding.io mounts each key of the target Secret as a
