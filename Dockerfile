@@ -76,4 +76,10 @@ EXPOSE 8000
 # via localhost from the backend process in this same container, never
 # a separate network endpoint. It holds every real credential.
 
+# Mirrors the /api/health check docker-compose.yml and the CNAP
+# WebService manifest both use -- gives plain `docker run`/`docker ps`
+# visibility into container health too, not just k8s-level probes.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
+
 ENTRYPOINT ["/docker-entrypoint.sh"]

@@ -115,6 +115,15 @@ services:
       - ./release-agent/ccp_jira.env:/workspace/ccp_jira.env:ro
     ports:
       - "8000:8000"
+    # Matches the HEALTHCHECK already baked into the Dockerfile -- kept
+    # here too so `docker compose ps` shows health status directly.
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    restart: unless-stopped
 
 volumes:
   release-agent-state:

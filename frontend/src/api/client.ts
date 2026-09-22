@@ -77,7 +77,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // Needed for the session cookie (see routers/auth.py) to be sent/
     // received at all when the frontend dev server (:5173) calls the
     // backend (:8000) directly -- genuinely cross-origin, unlike the
-    // nginx-proxied :8080 path where everything is same-origin already.
+    // single-container deployment where FastAPI serves both the API and
+    // the built frontend from the same origin/port already.
     credentials: 'include',
     ...init,
   })

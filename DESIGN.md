@@ -626,17 +626,27 @@ into, not in free-form LLM reasoning.
 
 **Risk:** Shared service account means the UI is the only audit trail of
 *who* triggered a Gerrit push or GitHub release.
-**Mitigation:** Backend must log `{ui_user, workflow_id, session_id,
-timestamp}` for every `/api/sessions` POST before step 5 (SSO) ships to
-production; don't let this workflow go live for the mutating skills
-(`gerrit-cherrypick-squash`, `stable2-github-release-tagger`) until that's in
-place.
+**Mitigation — done:** `routers/sessions.py` logs `{user, workflow_id,
+session_id}` on every `POST /api/sessions`, plus role-based access
+control (admin/user) and the mandatory name-entry step at login (see
+`AuthGate.tsx`) — attribution exists even without full SSO.
 
 **Risk:** One opencode server handling concurrent runs that touch the same
 git worktree (`.stable2-meta-sync/meta-rdk-broadband`) or shared session-state
 YAML files could race.
-**Mitigation:** Backend should serialize workflow starts that touch shared
-state (simple approach: one Python `asyncio.Lock`, reject a new run with
-"a stable2 workflow is already in progress" while one is active) — see
-`backend/app/opencode_client.py` `TODO` for where to add this before
-production use.
+**Mitigation — done:** `opencode_client.py`'s `mutating_lock` (one
+`asyncio.Lock` shared across every mutating workflow) serializes them —
+a second mutating run has to wait, with the frontend showing why (queue
+status), rather than racing on shared git state.
+
+**Risk:** the container runs everything as root (no `USER` directive) —
+this holds every credential in the system (GitHub token, Gerrit password,
+Jira service token), so a container-escape vulnerability would be worse
+than in a non-root container. **Deliberately not fixed in this pass**:
+doing so means relocating `/root/.config/gh`, `/root/.local/share/opencode`,
+and `/root/.netrc` to a non-root user's home directory, which ripples into
+every volume mount path in `docker-compose.yml` and whatever CNAP
+secret-mount paths get configured — didn't want to make that change
+without being able to fully re-test it against the real target
+environment. Also worth checking whether CNAP's own pod security policy
+already enforces `runAsNonRoot`, which would force this regardless.
