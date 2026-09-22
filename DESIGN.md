@@ -378,12 +378,31 @@ need zero changes to run under the UI.
 
 ### D4: opencode server auth and network exposure
 
-**Decision:** `opencode serve` binds to `0.0.0.0` inside the container only;
-it is never exposed outside the pod/container network. Basic auth
-(`OPENCODE_SERVER_USERNAME` / `OPENCODE_SERVER_PASSWORD`, both from a CNAP
-secret) is enabled as defense in depth. The FastAPI backend is the only
-caller, using the same secret. The browser only ever talks to the backend and
-to static frontend assets — it never sees opencode's credentials.
+**Updated (later session): collapsed from 3 containers to 1.** Originally
+this ran as 3 separate containers (`opencode-server`, `backend`, `frontend`
+via nginx), with `opencode-server` bound to `0.0.0.0` and reachable only
+over the internal Docker/pod network. That's still *safe* in principle, but
+checking a teammate's own working CNAP deployment (a different project,
+`jira_autotriage`) showed this team's proven, actually-deployed pattern is
+one container per app — their FastAPI backend serves the built React
+frontend directly as static files, no separate nginx container at all.
+Splitting into 3 containers would have meant 2 of them (`backend`,
+`opencode-server`) needing to stay internal-only with no public route, a
+pattern that specific CRD (`cnap.comcast.net/v1 WebService`) hasn't been
+confirmed to support — real, unresolved unknowns for something holding
+every credential this system has.
+
+**Decision now:** one container. `opencode serve` binds to `127.0.0.1` only
+(not `0.0.0.0`) — it is not just kept off the public internet, it's not a
+network endpoint at all beyond `localhost` inside this single container,
+reached exclusively by the FastAPI process in the same container (see
+`docker-entrypoint.sh`, which starts both processes and exits the whole
+container if either one dies, so a k8s liveness probe restarts cleanly
+rather than the pod running half-broken). FastAPI also now serves the built
+frontend directly (`backend/app/main.py`'s static-file block), mirroring
+that same proven pattern exactly. `OPENCODE_SERVER_PASSWORD` is left as a
+no-op knob (harmless to set, unnecessary now that there's no separate
+network hop to protect).
 
 **Alternative considered:** Expose opencode's built-in `opencode web` UI
 directly. Rejected — it's a generic chat client with no workflow catalog,
@@ -391,24 +410,38 @@ Jira/Gerrit-specific safety rails, or scoping to release-agent's skills; it
 would also need per-user opencode credentials, which conflicts with the
 shared-service-account decision.
 
+**Alternative considered (this session):** Keep the 3-container split and
+resolve the internal-only-routing question with CNAP support directly.
+Viable, but collapsing to 1 container removes the question entirely rather
+than needing an answer to it, and matches a pattern already proven to work
+on this exact CNAP setup — lower risk for getting a first real deployment
+out. Revisit if `opencode-server`'s resource needs ever outgrow what makes
+sense bundled with the API/frontend process.
+
 ## Data Storage
 
 No database in phase 1. State is filesystem-based, matching the existing
 tool:
 
-| Path (inside opencode-server container) | Contents | Persistence need |
+| Path (inside the single container) | Contents | Persistence need |
 | --- | --- | --- |
-| `/workspace` (= this repo) | skill/agent markdown, scripts, config | baked into the image; redeployed on release |
+| `/workspace` (= the `release-agent` submodule) | skill/agent markdown, scripts, config | baked into the image; redeployed on release |
 | `/workspace/*.yaml`, `*_state.yaml`, `last_run.txt` | incremental run state (e.g. `track_for_stable2_state.yaml` bootstraps from latest tag, then only diffs) | **must** survive restarts — mount a CNAP-provided PVC over these paths |
 | `/workspace/.stable2-meta-sync/meta-rdk-broadband` | git worktree used for `.inc` file prep | same PVC |
 | `~/.netrc`, `ccp_jira.env`, GitHub token | credentials | CNAP secrets, mounted read-only, never baked into the image or committed |
 | `~/.local/share/opencode/auth.json` | GitHub Copilot OAuth token | CNAP secret or one-time login against the deployed container — read-write, see "model provider auth" blocker |
-| `~/.local/share/opencode/mcp-auth.json` | Jira (`jira-ccp`) Flow OAuth token | CNAP secret or one-time login — read-write, see "Flow MCP / Jira OAuth" blocker |
+
+Jira no longer needs an entry here — it moved off the Flow OAuth
+(`mcp-auth.json`) path entirely, onto `ccp_jira.env`'s plain service-account
+REST token (see "Credential status" below), which is already covered by
+the `ccp_jira.env` row above.
 
 The image also needs `python3` + `python3-yaml` and `gh` (GitHub CLI)
 installed — confirmed required by actually running skills that shell out to
 `scripts/cherry_pick_to_stable2.py` and `gh api`/`gh pr`/`gh release`, not
-just LLM reasoning. Both are in `release-agent/Dockerfile`.
+just LLM reasoning. Both are in the root `Dockerfile` (the single-container
+build now installs everything release-agent needs directly, rather than
+release-agent's own Dockerfile being built separately).
 
 The backend itself is stateless; if we later want run history beyond what
 opencode's own `/api/session` list already provides (audit log of *which UI

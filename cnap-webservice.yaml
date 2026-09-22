@@ -1,0 +1,35 @@
+apiVersion: cnap.comcast.net/v1
+kind: WebService
+metadata:
+  name: release-agent-portal
+  namespace: corenw-att  # confirm the real namespace with your CNAP admin
+spec:
+  image: hub.comcast.net/<namespace>/release-agent-portal:<tag>
+  # UNKNOWN / needs confirming with CNAP docs or your teammate -- I only
+  # have one single-container example to go on:
+  #   - env vars (PORTAL_ADMIN_PASSWORD / PORTAL_USER_PASSWORD /
+  #     PORTAL_SESSION_SECRET / GIT_AUTHOR_NAME etc. -- see
+  #     docker-compose.yml's own comments for every one and exactly what
+  #     it does)
+  #   - secret mounts (GitHub token, Gerrit .netrc, ccp_jira.env, Copilot
+  #     auth -- these came from docker-compose.yml volume mounts
+  #     locally; CNAP needs its own equivalent, likely a Secret +
+  #     volumeMounts field this CRD probably exposes under a different
+  #     name than plain k8s)
+  #   - persistent volume for /workspace/.stable2-meta-sync (must
+  #     survive pod restarts -- see DESIGN.md "Data Storage")
+  #   - replicas: 1 explicitly -- do not let this one autoscale. Only
+  #     one *mutating* workflow (anything pushing to GitHub/Gerrit or
+  #     writing Jira) can run at a time (see
+  #     backend/app/routers/sessions.py's mutating_lock); a second
+  #     replica would let two mutating runs collide on the same git
+  #     state.
+  livenessProbe:
+    httpGet:
+      path: /api/health
+      port: 8000
+  startupProbe:
+    httpGet:
+      path: /api/health
+      port: 8000
+    initialDelaySeconds: 30

@@ -1,9 +1,11 @@
 import logging
+from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .opencode_client import OpencodeClient
@@ -96,3 +98,29 @@ async def health():
     except httpx.RequestError:
         opencode_ok = False
     return {"ok": True, "opencode_reachable": opencode_ok}
+
+
+# ── Serve the built React frontend (single-container deployment) ──────────
+# Only active when the frontend has actually been built into this image --
+# absent in plain local `uvicorn` dev (nothing built it), present in the
+# combined Dockerfile image used for CNAP (which COPYs the built dist to
+# /app/frontend/dist, a sibling of /app/app -- this file's own directory
+# -- not /workspace/frontend/dist; verified against the actual running
+# container after getting this wrong once with one `.parent` too many).
+# Registered last, deliberately: every `/api/*` route above already
+# claimed its exact path, so this only ever catches requests nothing
+# else matched.
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+if _FRONTEND_DIST.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="static-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        # A genuinely unmatched /api/* path should still 404 as JSON, not
+        # silently return the HTML app -- only fall back to the SPA shell
+        # for real page routes (React Router handles /history,
+        # /sessions/:id, etc. client-side once index.html loads).
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404)
+        return FileResponse(str(_FRONTEND_DIST / "index.html"))

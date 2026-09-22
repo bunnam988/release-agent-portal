@@ -9,7 +9,11 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    opencode_url: str = "http://opencode-server:4096"
+    # Default matches the single-container deployment (opencode-server
+    # and this backend run as two processes in the same container, see
+    # Dockerfile + docker-entrypoint.sh) -- override with
+    # PORTAL_OPENCODE_URL if ever split back into separate containers.
+    opencode_url: str = "http://localhost:4096"
     opencode_username: str = "opencode"
     opencode_password: str = ""
 

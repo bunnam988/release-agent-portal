@@ -1,5 +1,5 @@
 services:
-  opencode-server:
+  app:
     build:
       # release-agent is a git submodule nested here (not a sibling
       # directory) specifically so this whole repo is self-contained for
@@ -8,12 +8,35 @@ services:
       # --recursive` after a plain clone) pulls it in at build time. It's
       # still its own standalone repo (github.com/bunnam988/release-agent)
       # for anyone who just wants the opencode skills without the portal.
-      context: ./release-agent
+      context: .
       dockerfile: Dockerfile
     environment:
-      # Set to enable basic auth (also set PORTAL_OPENCODE_PASSWORD below
-      # to match). Left blank for local testing.
+      # Set to enable opencode's own basic auth. Left blank for local
+      # testing -- harmless either way now, since opencode-server is
+      # bound to 127.0.0.1 inside this container and never reachable
+      # from outside it regardless (see docker-entrypoint.sh).
       - OPENCODE_SERVER_PASSWORD=
+      - PORTAL_OPENCODE_USERNAME=opencode
+      - PORTAL_OPENCODE_PASSWORD=
+      # Only matters for local frontend dev against this container's API
+      # directly (e.g. `cd frontend && npm run dev`, hitting this
+      # container's :8000) -- the built-in single-container deployment
+      # itself is same-origin, no CORS involved.
+      - PORTAL_CORS_ORIGINS=http://localhost:5173
+      # Two shared passwords gating the portal, one per role -- admin gets
+      # every workflow, user only the ones marked admin_only=False in
+      # backend/app/workflows.py (today: on-demand-cherry-pick). Both
+      # unset/blank on the host = auth disabled entirely (today's
+      # open-access behavior) -- deliberately using the bare "pass
+      # through from host env, or omit" form here, NOT "=${VAR:-}", since
+      # that would set an empty string in the container and silently
+      # override config.py's safe default secret with an empty one. Set
+      # these on the host before relying on this anywhere beyond a laptop
+      # -- PORTAL_SESSION_SECRET must be a real random value or anyone
+      # can forge a valid login cookie.
+      - PORTAL_ADMIN_PASSWORD
+      - PORTAL_USER_PASSWORD
+      - PORTAL_SESSION_SECRET
       # Overrides the Dockerfile's placeholder git commit identity (these
       # env vars take precedence over git config for every git command --
       # must never be passed as an empty string, git treats that as a
@@ -56,13 +79,6 @@ services:
       # non-interactive credential once Comcast's Copilot admins provide
       # one — see DESIGN.md "Swapping to service accounts later".
       - opencode-auth:/root/.local/share/opencode
-      # Real service account, not interim: jira-ccp MCP is no longer used
-      # by anything in this project (every Jira-touching skill was
-      # migrated onto scripts/jira_rest.py / ccp_jira.env below instead —
-      # see DESIGN.md "Credential status"). This mount is dead and can be
-      # removed; left commented out rather than deleted outright in case
-      # some future workflow needs MCP again.
-      # - ${HOME}/.local/share/opencode/mcp-auth.json:/root/.local/share/opencode/mcp-auth.json
       # INTERIM (personal credential): named volume for `gh auth login`
       # done once inside this container (mirrors the opencode-auth pattern
       # above -- linux gh has no OS keyring, so it stores the token in this
@@ -97,45 +113,8 @@ services:
       # in the image) and never committed to the submodule either, so it
       # needs this explicit mount. Read-only: skills only read it.
       - ./release-agent/ccp_jira.env:/workspace/ccp_jira.env:ro
-    expose:
-      - "4096"
-
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    environment:
-      - PORTAL_OPENCODE_URL=http://opencode-server:4096
-      - PORTAL_OPENCODE_USERNAME=opencode
-      - PORTAL_OPENCODE_PASSWORD=
-      - PORTAL_CORS_ORIGINS=http://localhost:5173,http://localhost:8080
-      # Two shared passwords gating the portal, one per role -- admin gets
-      # every workflow, user only the ones marked admin_only=False in
-      # backend/app/workflows.py (today: on-demand-cherry-pick). Both
-      # unset/blank on the host = auth disabled entirely (today's
-      # open-access behavior) -- deliberately using the bare "pass
-      # through from host env, or omit" form here, NOT "=${VAR:-}", since
-      # that would set an empty string in the container and silently
-      # override config.py's safe default secret with an empty one. Set
-      # these on the host before relying on this anywhere beyond a laptop
-      # -- PORTAL_SESSION_SECRET must be a real random value or anyone
-      # can forge a valid login cookie.
-      - PORTAL_ADMIN_PASSWORD
-      - PORTAL_USER_PASSWORD
-      - PORTAL_SESSION_SECRET
-    depends_on:
-      - opencode-server
     ports:
       - "8000:8000"
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    depends_on:
-      - backend
-    ports:
-      - "8080:80"
 
 volumes:
   release-agent-state:

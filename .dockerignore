@@ -1,0 +1,27 @@
+.git
+frontend/node_modules
+frontend/dist
+backend/app/__pycache__
+**/__pycache__
+**/*.pyc
+.DS_Store
+._*
+.vscode
+release-agent/.git
+
+# release-agent's own .dockerignore (credential/state-file exclusions) is
+# NOT respected here -- Docker only reads the .dockerignore at the root
+# of the actual build context (this directory), never a nested one in a
+# subdirectory being copied in. Mirrored explicitly below so a
+# credential file placed at release-agent/ccp_jira.env (to satisfy the
+# docker-compose volume mount) can never get baked into the image, same
+# guarantee release-agent/.dockerignore gives when it's built standalone.
+release-agent/ccp_jira.env
+release-agent/*.env
+release-agent/*_state.yaml
+release-agent/release_session.yaml
+release-agent/stable2_*.yaml
+release-agent/last_run.txt
+release-agent/.ruff_cache
+release-agent/.main_tagging
+release-agent/.stable2-meta-sync
