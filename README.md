@@ -102,30 +102,48 @@ One image, built from the repo root (not a subdirectory) — the Dockerfile
 handles building the frontend, installing the backend's Python deps, and
 setting up opencode-server, all as part of the same build.
 
-Notes for whoever deploys this to Kubernetes/CNAP:
+## Deploying to CNAP
+
+`cnap-webservice.yaml` + `cnap-secret.yaml.template` are ready to use —
+schema confirmed directly against `cnap.comcast.net/cnap`'s own API
+reference and sample manifests, not guessed:
+
+1. Copy `cnap-secret.yaml.template` to `cnap-secret.yaml` (gitignored —
+   never commit the real one) and fill in the real values (the 4
+   credential files' full contents, the portal passwords, a real random
+   session secret, your git identity).
+2. `kubectl apply -f cnap-secret.yaml -n corenw-att` — the `WebService`
+   references these by name, so they need to exist first.
+3. `kubectl apply -f cnap-webservice.yaml -n corenw-att`.
+
+How the credentials actually get into the container: the 4 files
+(`ccp_jira.env`, `gerrit.netrc`, `gh-hosts.yml`, `opencode-auth.json`) are
+claimed via `serviceClaims` with `type: servicebinding.io`, which mounts
+each Secret key as a file under `/bindings/creds-files/<key>` —
+`docker-entrypoint.sh` copies them from there into the paths this app
+actually expects, **only if** a runtime volume mount (the local
+`docker-compose.yml` path) hasn't already provided a real one, so this
+doesn't affect local dev at all. `PORTAL_ADMIN_PASSWORD`,
+`PORTAL_SESSION_SECRET`, and the git-identity vars go straight in as env
+vars via `env[].valueFrom.secretKeyRef`.
+
+Other notes for whoever deploys this:
 - Only **one** container needs a public route/ingress — there's only one
   container, period. `opencode-server` never gets its own network
   endpoint even inside the pod, so there's no internal-only-routing
-  question to solve.
-- Needs persistent storage at `/workspace/.stable2-meta-sync` (a real PVC,
-  not the local named volume `docker-compose.yml` uses) so incremental run
-  state survives pod restarts — see `DESIGN.md`'s "Data Storage" table for
-  the full list of paths that need to persist.
-- Credentials (GitHub token, Gerrit `.netrc`, `ccp_jira.env`, Copilot auth)
-  should become real k8s Secrets mounted at the same paths
-  `docker-compose.yml` uses today, not baked into the image.
-- Only one *mutating* workflow (anything that pushes to GitHub/Gerrit or
-  writes Jira) runs at a time — see `backend/app/routers/sessions.py`'s
-  `mutating_lock` — so this should stay a **single replica**. A second
-  replica would let two mutating runs collide on the same git state, and
+  question to solve. `spec.ingress.public: true` is what actually turns
+  this on (confirmed default is `false`).
+- `spec.autoscale: {min: 1, max: 1}` is deliberate, not an oversight — see
+  `backend/app/routers/sessions.py`'s `mutating_lock`. A second replica
+  would let two mutating workflow runs collide on the same git state, and
   since opencode-server lives inside this same container, scaling this
   service scales opencode-server too, not just the stateless API/frontend
   part.
-- A draft `cnap-webservice.yaml` is included, based on the one real
-  example of this team's `WebService` CRD usage available at the time it
-  was written — several fields (secrets, volumes, replica count) are
-  flagged inline as unconfirmed; treat it as a starting point to correct
-  against real CNAP docs, not something to apply as-is.
+- **Still genuinely unresolved**: no dedicated persistent-volume concept
+  was found for a plain `WebService` in the docs available at the time
+  this was written. `/workspace/.stable2-meta-sync` needs to survive pod
+  restarts (see `DESIGN.md`'s "Data Storage" table) — ask directly rather
+  than assume ephemeral storage is acceptable.
 
 ## Updating the release-agent submodule
 

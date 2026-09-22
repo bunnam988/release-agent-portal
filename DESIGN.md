@@ -566,12 +566,40 @@ step, not a code change:
   but won't warn about a *person's* name being there instead of a bot's,
   since that's the intended interim state right now.
 
+### CNAP `WebService` schema — confirmed directly, not guessed
+
+Read `cnap.comcast.net/cnap`'s own docs (Microservices Journey -> Advanced
+Topics -> API Reference -> WebService, and its Sample Manifest pages) --
+this is CNAP's real, public-facing documentation site, not a login-gated
+dashboard. Resolved from there, and now implemented in `cnap-webservice.yaml`
++ `cnap-secret.yaml.template`:
+- **Secrets do have a real mechanism**: a plain Kubernetes `Secret` +
+  a `WebService`'s `serviceClaims`, with `type: env` (environment
+  variables) or `type: servicebinding.io` (mounts each Secret key as a
+  file under `/bindings/<claim-name>/<key>`). Deliberately did **not**
+  fall back to baking credentials into the image once this was
+  confirmed -- that fallback (briefly implemented, then reverted) was a
+  real, worse trade-off only worth accepting if no proper secret
+  mechanism existed at all.
+- `spec.regions` is **required** (valid: `wc`/`po`/`ho`/`as`/`ch`) --
+  was missing from every earlier draft of this manifest.
+- `spec.ingress.public` defaults to `false` -- confirms `WebService`
+  isn't public unless explicitly opted in.
+- `spec.autoscale` defaults to `min: 1, max: 10` if the block is present
+  but incomplete -- set explicitly to `{min: 1, max: 1}` rather than
+  omitting the block and trusting an unconfirmed default.
+
 ### Open items still outside code (CNAP/infra-owner's call, not mine)
 
-- Whoever handles the actual deployment target (namespace, ingress/TLS,
-  secrets/PVC provisioning, egress allowlist to `gerrit.teamccp.com`,
-  `github.com`) — explicitly not something I'm tracking further; deployment
-  itself is being handled outside this repo's scope.
+- **Persistent storage for `WebService` specifically** -- no dedicated
+  PVC/volume concept was found in the docs read so far. `/workspace/.stable2-meta-sync`
+  needs to survive pod restarts (see "Data Storage" below); this needs a
+  direct answer, not an assumption that ephemeral storage is fine.
+- Whoever handles the actual deployment target (namespace -- confirmed as
+  `corenw-att` -- ingress/TLS, egress allowlist to `gerrit.teamccp.com`,
+  `github.com`) — explicitly not something I'm tracking further beyond
+  what's documented above; deployment itself is being handled outside
+  this repo's scope.
 - Whether/when Comcast provisions real Gerrit/GitHub service-account
   credentials and a non-interactive Copilot credential — still open, tracked
   above as the eventual swap-out target.

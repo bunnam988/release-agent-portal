@@ -22,3 +22,7 @@ __pycache__/
 # outside this repo, never committed here.
 *.env
 .env*
+
+# The real, filled-in version of the CNAP secrets manifest -- only the
+# .template (placeholders only) is ever tracked.
+cnap-secret.yaml

@@ -46,6 +46,29 @@ case "$current_name" in
     ;;
 esac
 
+# On CNAP: these 4 files arrive via a WebService `serviceClaims` entry
+# of type `servicebinding.io` (see cnap-webservice.yaml + cnap-secret.yaml),
+# which mounts each key of a Secret as a file under
+# /bindings/<claim-name>/<key> -- the standard servicebinding.io
+# convention this type name follows. Copy them into the paths this app
+# actually expects. Locally (docker-compose.yml), that /bindings path
+# never exists at all, so this loop is a silent no-op and the existing
+# runtime volume mounts are the only thing that ever provides these --
+# completely unaffected either way.
+_maybe_use_bound_credential() {
+  src="/bindings/creds-files/$1"
+  dest="$2"
+  if [ -f "$src" ] && [ ! -f "$dest" ]; then
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+    echo "Using CNAP-bound credential for $dest"
+  fi
+}
+_maybe_use_bound_credential "ccp-jira-env" "/workspace/ccp_jira.env"
+_maybe_use_bound_credential "gerrit-netrc" "/root/.netrc"
+_maybe_use_bound_credential "gh-hosts-yml" "/root/.config/gh/hosts.yml"
+_maybe_use_bound_credential "opencode-auth-json" "/root/.local/share/opencode/auth.json"
+
 opencode serve --hostname 127.0.0.1 --port 4096 &
 OPENCODE_PID=$!
 

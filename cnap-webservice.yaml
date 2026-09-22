@@ -1,29 +1,29 @@
+# Apply cnap-secret.yaml (from cnap-secret.yaml.template) BEFORE this --
+# the serviceClaims below reference those Secrets by name, which must
+# already exist.
+#
+# Schema confirmed against cnap.comcast.net/cnap (Microservices Journey ->
+# Advanced Topics -> API Reference -> WebService, and -> Sample Manifest)
+# -- not guessed. Still one open item: no dedicated persistent-volume
+# concept was found for a plain WebService (see DESIGN.md "Data Storage"
+# -- /workspace/.stable2-meta-sync needs to survive pod restarts). Ask
+# directly rather than assume ephemeral storage is fine.
 apiVersion: cnap.comcast.net/v1
 kind: WebService
 metadata:
   name: release-agent-portal
-  namespace: corenw-att  # confirm the real namespace with your CNAP admin
+  namespace: corenw-att
 spec:
-  image: hub.comcast.net/<namespace>/release-agent-portal:<tag>
-  # UNKNOWN / needs confirming with CNAP docs or your teammate -- I only
-  # have one single-container example to go on:
-  #   - env vars (PORTAL_ADMIN_PASSWORD / PORTAL_USER_PASSWORD /
-  #     PORTAL_SESSION_SECRET / GIT_AUTHOR_NAME etc. -- see
-  #     docker-compose.yml's own comments for every one and exactly what
-  #     it does)
-  #   - secret mounts (GitHub token, Gerrit .netrc, ccp_jira.env, Copilot
-  #     auth -- these came from docker-compose.yml volume mounts
-  #     locally; CNAP needs its own equivalent, likely a Secret +
-  #     volumeMounts field this CRD probably exposes under a different
-  #     name than plain k8s)
-  #   - persistent volume for /workspace/.stable2-meta-sync (must
-  #     survive pod restarts -- see DESIGN.md "Data Storage")
-  #   - replicas: 1 explicitly -- do not let this one autoscale. Only
-  #     one *mutating* workflow (anything pushing to GitHub/Gerrit or
-  #     writing Jira) can run at a time (see
-  #     backend/app/routers/sessions.py's mutating_lock); a second
-  #     replica would let two mutating runs collide on the same git
-  #     state.
+  image: hub.comcast.net/rdkb_corenw/release-agent-portal-app:latest
+
+  # Required field -- valid values: wc, po, ho, as, ch. Min 1, max 3,
+  # recommended 3 for HA. Starting with 1 region for this initial
+  # deployment; expand once it's confirmed working.
+  regions:
+    - wc
+
+  servicePort: 8000
+
   livenessProbe:
     httpGet:
       path: /api/health
@@ -33,3 +33,78 @@ spec:
       path: /api/health
       port: 8000
     initialDelaySeconds: 30
+
+  # Public route -- default is false (internal-only) if omitted. This
+  # app is the one thing that's meant to be reachable from a browser.
+  ingress:
+    public: true
+
+  # Explicit, not omitted -- do not let this autoscale past 1 replica.
+  # Only one *mutating* workflow (anything pushing to GitHub/Gerrit or
+  # writing Jira) can run at a time (see
+  # backend/app/routers/sessions.py's mutating_lock); a second replica
+  # would let two mutating runs collide on the same git state.
+  autoscale:
+    min: 1
+    max: 1
+
+  # Plain values, plus secret-backed ones via valueFrom.secretKeyRef --
+  # only secrets referenced by a serviceClaims entry below can be used
+  # this way (confirmed in CNAP's own docs).
+  env:
+    - name: PORTAL_ADMIN_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: release-agent-portal-config
+          key: portal-admin-password
+    - name: PORTAL_USER_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: release-agent-portal-config
+          key: portal-user-password
+    - name: PORTAL_SESSION_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: release-agent-portal-config
+          key: portal-session-secret
+    - name: GIT_AUTHOR_NAME
+      valueFrom:
+        secretKeyRef:
+          name: release-agent-portal-config
+          key: git-author-name
+    - name: GIT_AUTHOR_EMAIL
+      valueFrom:
+        secretKeyRef:
+          name: release-agent-portal-config
+          key: git-author-email
+    - name: GIT_COMMITTER_NAME
+      valueFrom:
+        secretKeyRef:
+          name: release-agent-portal-config
+          key: git-author-name
+    - name: GIT_COMMITTER_EMAIL
+      valueFrom:
+        secretKeyRef:
+          name: release-agent-portal-config
+          key: git-author-email
+
+  # type: servicebinding.io mounts each key of the target Secret as a
+  # file under /bindings/<claim-name>/<key> -- docker-entrypoint.sh
+  # copies these into the paths this app actually expects
+  # (/workspace/ccp_jira.env, /root/.netrc, etc), falling back to
+  # nothing (silent no-op) if this path doesn't exist, which is exactly
+  # the local docker-compose case.
+  serviceClaims:
+    - name: creds-files
+      service:
+        kind: Secret
+        name: release-agent-portal-files
+      type: servicebinding.io
+    # Also claim the config secret with type: env -- per CNAP's docs,
+    # only a secret referenced by *some* serviceClaims entry can be used
+    # via env[].valueFrom.secretKeyRef above.
+    - name: creds-config
+      service:
+        kind: Secret
+        name: release-agent-portal-config
+      type: env
