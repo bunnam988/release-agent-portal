@@ -1,7 +1,8 @@
-import { Eye, EyeOff, GitBranch, Loader2, User } from 'lucide-react'
+import { Eye, EyeOff, Loader2, User } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { getAuthStatus, login } from '../api/client'
+import RdkMark from './RdkMark'
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -92,9 +93,9 @@ export default function AuthGate({ children }: { children: ReactNode }) {
         <div className="auth-card-wrap">
           <div className="auth-brand">
             <div className="auth-brand-icon">
-              <GitBranch size={22} />
+              <RdkMark size={30} />
             </div>
-            <div className="auth-brand-name">Release Agent Portal</div>
+            <div className="auth-brand-name">RDKB Middleware Release Agent</div>
           </div>
 
           {step === 'password' && (

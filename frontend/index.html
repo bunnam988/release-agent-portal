@@ -2,12 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- RDKB brand mark: four stacked color bars, matching rdkcentral.com's
+         own logo colors (blue/yellow/green/orange) -- see
+         frontend/src/components/RdkMark.tsx for the same design used
+         inside the app itself. -->
     <link
       rel="icon"
-      href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='3.5' width='20' height='3.6' rx='1.8' fill='%2300B0DA'/%3E%3Crect x='2' y='8.8' width='20' height='3.6' rx='1.8' fill='%23FCBB31'/%3E%3Crect x='2' y='14.1' width='20' height='3.6' rx='1.8' fill='%2394C73D'/%3E%3Crect x='2' y='19.4' width='20' height='3.6' rx='1.8' fill='%23F37D31'/%3E%3C/svg%3E"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Release Agent Portal</title>
+    <title>RDKB Middleware Release Agent</title>
     <script>
       // Applied synchronously, before anything renders -- avoids a flash
       // of the wrong theme on load (the alternative, setting this from a

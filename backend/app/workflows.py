@@ -62,6 +62,11 @@ class Workflow(BaseModel):
     # is opted out of this today, per the current requirement. Has no
     # effect at all while auth is disabled (everyone is treated as admin).
     admin_only: bool = True
+    # Plain-English, numbered walkthrough of what actually happens when
+    # this runs, shown in the UI as a "How this works" section before
+    # starting -- per user feedback that first-time users need more than
+    # the one-line description to know what they're about to kick off.
+    help_steps: list[str] = []
 
 
 _DRY_RUN = WorkflowArg(name="dry_run", flag="--dry-run", label="Dry run", kind="flag")
@@ -83,6 +88,11 @@ CATALOG: list[Workflow] = [
         args=[_DRY_RUN],
         mutating=True,
         category="primary",
+        help_steps=[
+            "Checks every tracked repo's develop branch against its latest release tag.",
+            "For any repo that's ahead, runs the standard git-flow release process: generates a changelog, creates the release tag, and pushes it.",
+            "With Dry run checked, shows exactly what would be tagged/released without actually doing it.",
+        ],
     ),
     Workflow(
         id="track-for-stable2",
@@ -100,6 +110,12 @@ CATALOG: list[Workflow] = [
         ],
         mutating=True,
         next_workflow_id="stable2-candidates",
+        help_steps=[
+            "First run ever bootstraps from the latest tag; every run after that only looks at commits merged since the last run, using saved per-repo state.",
+            "For each newly merged develop commit, finds its linked Jira ticket.",
+            "Adds the track_for_stable2 label (or your chosen label) to that ticket.",
+            "With Dry run checked, shows which tickets would be labeled without labeling them.",
+        ],
     ),
     Workflow(
         id="stable2-candidates",
@@ -115,6 +131,12 @@ CATALOG: list[Workflow] = [
             _TEST_REPO,
         ],
         next_workflow_id="stable2-status-evaluator",
+        help_steps=[
+            "Searches Jira for tickets carrying your chosen candidate label.",
+            "Filters out any already marked *_considered from a previous cycle.",
+            "Writes the remaining list to stable2_candidates.yaml — read-only, nothing in Jira/GitHub/Gerrit changes.",
+            "Feeds directly into Evaluate stable2 readiness next.",
+        ],
     ),
     Workflow(
         id="stable2-status-evaluator",
@@ -127,6 +149,12 @@ CATALOG: list[Workflow] = [
         starter_command="/stable2-status-evaluator",
         args=[_TEST_REPO],
         next_workflow_id="jira-pr-lookup",
+        help_steps=[
+            "Takes the candidates list from the previous step.",
+            "Fetches each ticket's real Jira status: RM Approved flag, parent ticket, and linked dependency tickets.",
+            "Groups candidates into ready vs. not-ready based on that.",
+            "Read-only — writes its evaluation, doesn't change Jira. Feeds Look up PRs for a Jira ticket next.",
+        ],
     ),
     Workflow(
         id="jira-pr-lookup",
@@ -142,6 +170,12 @@ CATALOG: list[Workflow] = [
             _TEST_REPO,
         ],
         next_workflow_id="stable2-release-tracking-ticket",
+        help_steps=[
+            "Starting from the ticket you give it, walks every subtask and dependency ticket (breadth-first).",
+            "For each one, finds the PR(s) that were actually merged to develop.",
+            "Writes the full list to pr_list.yaml for the labeling/tagging steps that follow.",
+            "With Dry run checked, shows the lookup without writing the file.",
+        ],
     ),
     Workflow(
         id="stable2-ready-considered-labeler",
@@ -163,6 +197,12 @@ CATALOG: list[Workflow] = [
         ],
         mutating=True,
         next_workflow_id="stable2-github-release-tagger",
+        help_steps=[
+            "Takes the READY-grouped tickets from the readiness evaluation step.",
+            "Shows a preview of exactly which tickets will be labeled before touching anything.",
+            "On confirmation, adds the *_considered label to each — this marks them officially in-scope for this sync cycle.",
+            "Run this before the GitHub tagging / Gerrit cherry-pick steps, since those only act on tickets already marked considered.",
+        ],
     ),
     Workflow(
         id="stable2-github-release-tagger",
@@ -179,6 +219,11 @@ CATALOG: list[Workflow] = [
         ],
         mutating=True,
         next_workflow_id="stable2-srcrev-updater",
+        help_steps=[
+            "For every repo with a considered ticket, computes the next stable2 tag name.",
+            "Creates the GitHub release for that tag, with auto-generated changelog notes covering everything since the last release.",
+            "With Dry run checked, shows which tags would be created without creating them.",
+        ],
     ),
     Workflow(
         id="stable2-srcrev-updater",
@@ -191,6 +236,11 @@ CATALOG: list[Workflow] = [
         args=[_DRY_RUN, _TEST_REPO],
         mutating=True,
         next_workflow_id="gerrit-cherrypick-squash",
+        help_steps=[
+            "Resolves the real GitHub commit SHA for each eligible repo's new stable2 tag.",
+            "Updates generic-srcrev.inc in the local meta-rdk-broadband git worktree to point at that SHA.",
+            "Doesn't push anything itself — that happens as part of the Gerrit cherry-pick step next.",
+        ],
     ),
     Workflow(
         id="gerrit-cherrypick-squash",
@@ -206,6 +256,12 @@ CATALOG: list[Workflow] = [
             _TEST_REPO,
         ],
         mutating=True,
+        help_steps=[
+            "Finds Gerrit changes linked to the in-scope (considered) Jira tickets.",
+            "Cherry-picks each one onto the target branch, per repo.",
+            "Squashes each repo's cherry-picked changes into a single commit.",
+            "Pushes under a shared Gerrit topic — normally the bi-weekly sync ticket's key, so run Create stable2 sync tracking ticket first.",
+        ],
     ),
     Workflow(
         id="stable2-release-tracking-ticket",
@@ -220,6 +276,11 @@ CATALOG: list[Workflow] = [
         args=[_DRY_RUN, _TEST_REPO],
         mutating=True,
         next_workflow_id="stable2-ready-considered-labeler",
+        help_steps=[
+            "Creates one Jira Task representing this bi-weekly sync cycle.",
+            "Links every successfully cherry-picked ticket to it with a 'deploys' link.",
+            "Its ticket key becomes the Gerrit topic used later — this is why it needs to run before Gerrit cherry-pick + squash, not after.",
+        ],
     ),
     Workflow(
         id="stable2-pr-labeler",
@@ -240,6 +301,11 @@ CATALOG: list[Workflow] = [
             _TEST_REPO,
         ],
         mutating=True,
+        help_steps=[
+            "Takes the PRs found by Look up PRs for a Jira ticket.",
+            "Adds the 'cherry-pick to support/stable2' label (or your chosen label) to each one on GitHub.",
+            "That label is what triggers GitHub's own existing automation to actually open the cherry-pick PR — this workflow only adds the label, it doesn't open PRs itself.",
+        ],
     ),
     Workflow(
         id="stable2-release-orchestrator",
@@ -262,6 +328,12 @@ CATALOG: list[Workflow] = [
         ],
         mutating=True,
         category="primary",
+        help_steps=[
+            "Runs every phase of the stable2 pipeline in the documented order automatically — tracking, candidates, readiness, PR lookup, labeling, ticket creation, GitHub tagging, SRCREV, Gerrit cherry-pick.",
+            "Pauses between each phase for your explicit confirmation before continuing.",
+            "Delete existing state files checkbox wipes all prior progress before starting — cannot be undone, only use this for a genuinely fresh cycle.",
+            "This is the one-click option if you don't need to run/inspect individual phases yourself.",
+        ],
     ),
     Workflow(
         id="stable2-meta-sync-orchestrator",
@@ -276,6 +348,12 @@ CATALOG: list[Workflow] = [
         starter_command="Start the stable2 meta sync orchestration.",
         args=[_DRY_RUN, _TEST_REPO],
         mutating=True,
+        help_steps=[
+            "Assumes PR collection already happened (jira-pr-lookup / PR labeling ran separately) — this picks up from there.",
+            "Runs GitHub cherry-pick, then creates the bi-weekly Jira sync ticket (its key becomes the Gerrit topic used later).",
+            "Continues with considered labeling, GitHub tagging, and SRCREV prep.",
+            "Finishes with Gerrit cherry-pick/squash under that same topic — in that specific order, matching the documented pipeline.",
+        ],
     ),
     Workflow(
         id="on-demand-cherry-pick",
@@ -316,6 +394,12 @@ CATALOG: list[Workflow] = [
         mutating=True,
         category="primary",
         admin_only=False,
+        help_steps=[
+            "Takes the Jira ticket(s) you specify — comma-separated if more than one.",
+            "Finds and cherry-picks each ticket's merged PR(s) onto the GitHub branch you name.",
+            "Computes a new hotfix tag per repo and updates SRCREV/PKGREV to match.",
+            "Syncs any linked Gerrit changes under the Gerrit topic you specify.",
+        ],
     ),
 ]
 

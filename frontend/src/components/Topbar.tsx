@@ -7,6 +7,7 @@ import { useTheme } from '../hooks/useTheme'
 function titleForPath(pathname: string): string {
   if (pathname === '/') return 'Dashboard'
   if (pathname.startsWith('/history')) return 'History'
+  if (pathname.startsWith('/docs')) return 'Documentation'
   if (pathname.startsWith('/sessions/')) return 'Workflow Run'
   return 'Release Agent'
 }

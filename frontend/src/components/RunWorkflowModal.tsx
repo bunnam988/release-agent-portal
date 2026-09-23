@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronUp, ListChecks } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -25,6 +26,9 @@ export default function RunWorkflowModal({ workflow, unavailableIntegrations, on
   const [values, setValues] = useState<Record<string, string | boolean>>({})
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Expanded by default -- a first-time user should immediately see how
+  // the workflow works, not have to notice and click a small toggle.
+  const [showHelp, setShowHelp] = useState(true)
   const navigate = useNavigate()
 
   const missing = workflow.args.filter((arg) => arg.required && !String(values[arg.name] ?? '').trim())
@@ -67,6 +71,23 @@ export default function RunWorkflowModal({ workflow, unavailableIntegrations, on
       }
     >
       <p className="modal-description">{workflow.description}</p>
+
+      {workflow.help_steps.length > 0 && (
+        <div className="help-section">
+          <button type="button" className="help-toggle" onClick={() => setShowHelp((v) => !v)}>
+            <ListChecks size={14} />
+            How this works
+            {showHelp ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+          {showHelp && (
+            <ol className="help-steps">
+              {workflow.help_steps.map((step, i) => (
+                <li key={i}>{step}</li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
 
       {blocked && (
         <div className="banner warning">

@@ -3,6 +3,7 @@ import { Toaster } from 'sonner'
 import AppShell from './components/AppShell'
 import AuthGate from './components/AuthGate'
 import Dashboard from './pages/Dashboard'
+import Documentation from './pages/Documentation'
 import History from './pages/History'
 import SessionView from './pages/SessionView'
 import './App.css'
@@ -28,6 +29,7 @@ function App() {
           <Route element={<AppShell />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/history" element={<History />} />
+            <Route path="/docs" element={<Documentation />} />
             <Route path="/sessions/:sessionId" element={<SessionView />} />
           </Route>
         </Routes>

@@ -16,6 +16,7 @@ export interface Workflow {
   next_workflow_id?: string | null
   requires_mcp: string[]
   category: 'primary' | 'advanced'
+  help_steps: string[]
 }
 
 export interface SessionSummary {

@@ -1,10 +1,12 @@
-import { History, LayoutDashboard, Rocket } from 'lucide-react'
+import { BookOpen, History, LayoutDashboard } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useHealth } from '../hooks/useHealth'
+import RdkMark from './RdkMark'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/history', label: 'History', icon: History, end: false },
+  { to: '/docs', label: 'Documentation', icon: BookOpen, end: false },
 ]
 
 export default function Sidebar() {
@@ -14,11 +16,11 @@ export default function Sidebar() {
     <aside className="sidebar">
       <div className="sidebar-brand">
         <div className="sidebar-brand-icon">
-          <Rocket size={20} />
+          <RdkMark size={20} />
         </div>
         <div>
-          <div className="sidebar-brand-title">Release Agent</div>
-          <div className="sidebar-brand-subtitle">RDK Broadband Portal</div>
+          <div className="sidebar-brand-title">RDKB Release Agent</div>
+          <div className="sidebar-brand-subtitle">Middleware</div>
         </div>
       </div>
 

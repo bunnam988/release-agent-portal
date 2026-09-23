@@ -29,9 +29,10 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeWorkflow, setActiveWorkflow] = useState<Workflow | null>(null)
-  // Visible by default: a first-time visitor should immediately see that
-  // individual skills exist, not have to notice and click a small toggle.
-  const [showAdvanced, setShowAdvanced] = useState(true)
+  // Collapsed by default -- keeps the dashboard focused on the primary
+  // workflows first; individual skills are one click away via the
+  // toggle below for anyone who needs them.
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   useEffect(() => {
     listWorkflows()
@@ -56,7 +57,6 @@ export default function Dashboard() {
 
   return (
     <div>
-      <p className="subtitle">Pick what you want to do.</p>
       {error && <div className="banner error">{error}</div>}
 
       <section className="hero-section">

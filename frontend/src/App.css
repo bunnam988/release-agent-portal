@@ -170,12 +170,15 @@ h3 {
   width: 34px;
   height: 34px;
   border-radius: var(--radius-sm);
-  background: var(--accent-gradient);
+  /* RdkMark draws its own 4-color bars -- a colored gradient behind it
+     would clash, so this stays neutral (matches the surrounding
+     elevated surfaces instead of the accent color other icon chips
+     use). */
+  background: var(--bg-elevated-2);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
-  box-shadow: 0 4px 14px -4px rgba(0, 147, 209, 0.55);
+  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.25);
   flex-shrink: 0;
 }
 
@@ -290,6 +293,9 @@ h3 {
 .topbar-title {
   font-size: 1.05rem;
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topbar-right {
@@ -456,34 +462,37 @@ kbd {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 340px;
+  width: 460px;
 }
 
 .auth-brand {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 28px;
   animation: cardIn 0.4s var(--ease) backwards;
 }
 
 .auth-brand-icon {
-  width: 48px;
-  height: 48px;
+  width: 56px;
+  height: 56px;
   border-radius: var(--radius-md);
-  background: var(--accent-gradient);
-  color: white;
+  /* RdkMark draws its own 4-color bars -- see the same fix on
+     .sidebar-brand-icon for why this can't be the accent gradient. */
+  background: var(--bg-elevated-2);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8px 24px -6px rgba(0, 147, 209, 0.5);
+  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.35);
 }
 
 .auth-brand-name {
   font-weight: 700;
-  font-size: 1rem;
+  font-size: 1.15rem;
   letter-spacing: -0.01em;
+  text-align: center;
+  max-width: 320px;
 }
 
 .auth-card {
@@ -492,7 +501,7 @@ kbd {
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 32px 30px;
+  padding: 44px 42px;
   background: linear-gradient(180deg, var(--bg-elevated-2) 0%, var(--bg-elevated) 100%);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -525,21 +534,21 @@ kbd {
 }
 
 .auth-card h1 {
-  font-size: 1.15rem;
+  font-size: 1.35rem;
   margin: 0;
 }
 
 .auth-subtitle {
   color: var(--text-dim);
-  font-size: 0.82rem;
-  margin: 0 0 18px;
+  font-size: 0.88rem;
+  margin: 0 0 20px;
   line-height: 1.4;
 }
 
 .auth-input-group {
   position: relative;
   width: 100%;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .auth-card input {
@@ -548,8 +557,8 @@ kbd {
   border: 1px solid var(--border-strong);
   color: var(--text);
   border-radius: var(--radius-sm);
-  padding: 11px 40px 11px 14px;
-  font-size: 0.9rem;
+  padding: 13px 42px 13px 16px;
+  font-size: 0.95rem;
   text-align: left;
   transition: border-color var(--duration) var(--ease), box-shadow var(--duration) var(--ease);
 }
@@ -592,7 +601,8 @@ kbd {
   width: 100%;
   background: var(--accent-gradient);
   font-weight: 600;
-  padding: 11px;
+  font-size: 0.95rem;
+  padding: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1104,6 +1114,80 @@ kbd {
   color: var(--text-dim);
   font-size: 0.78rem;
   margin-top: 4px;
+}
+
+/* ---------- Documentation ---------- */
+
+.docs-intro {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  margin-bottom: 28px;
+}
+
+.docs-intro p {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.6;
+  margin: 0 0 10px;
+}
+
+.docs-intro p:last-child {
+  margin-bottom: 0;
+}
+
+.docs-intro code {
+  background: var(--bg-elevated-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+.docs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.docs-entry {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+}
+
+.docs-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+}
+
+.docs-entry-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text);
+  flex: 1;
+}
+
+.docs-entry-description {
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  margin: 8px 0 10px;
+}
+
+.docs-entry-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 /* ---------- Forms / args (used inside RunWorkflowModal) ---------- */
@@ -1775,6 +1859,43 @@ button:disabled {
   font-size: 0.88rem;
   line-height: 1.5;
   margin: 0;
+}
+
+.help-section {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+}
+
+.help-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent-strong);
+  text-align: left;
+}
+
+.help-toggle svg:last-child {
+  margin-left: auto;
+  color: var(--text-dim);
+}
+
+.help-steps {
+  margin: 0;
+  padding: 4px 14px 10px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.83rem;
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 .modal-footer {

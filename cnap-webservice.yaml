@@ -17,10 +17,17 @@
 # concept was found for a plain WebService (see DESIGN.md "Data Storage"
 # -- /workspace/.stable2-meta-sync needs to survive pod restarts). Ask
 # directly rather than assume ephemeral storage is fine.
+# Renamed from "release-agent-portal" to "rdkb-middleware-release-agent"
+# per manager feedback -- the old name was too generic. This changes the
+# resulting URL (was release-agent-portal.web.cnap.comcast.net). IMPORTANT:
+# renaming metadata.name means CNAP treats this as a different resource,
+# not an update to the old one -- delete the old WebService explicitly
+# (`kubectl delete webservice release-agent-portal -n corenw-att`) or it's
+# left running/orphaned alongside this new one.
 apiVersion: cnap.comcast.net/v1
 kind: WebService
 metadata:
-  name: release-agent-portal
+  name: rdkb-middleware-release-agent
   namespace: corenw-att
 spec:
   image: hub.comcast.net/rdkb_corenw/release-agent-portal-app:latest
