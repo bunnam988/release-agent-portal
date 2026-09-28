@@ -83,10 +83,15 @@ EXPOSE 8000
 # via localhost from the backend process in this same container, never
 # a separate network endpoint. It holds every real credential.
 
-# Mirrors the /api/health check docker-compose.yml and the CNAP
+# Mirrors the /api/health/live check docker-compose.yml and the CNAP
 # WebService manifest both use -- gives plain `docker run`/`docker ps`
 # visibility into container health too, not just k8s-level probes.
+# Deliberately /api/health/live, not /api/health -- see that route's own
+# comment in backend/app/main.py for why (the latter awaits opencode's
+# own health with up to a 5s timeout, which is fine for the frontend's
+# own indicator but not for anything that reacts to failures by killing
+# the container/pod).
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/live')" || exit 1
 
 ENTRYPOINT ["/docker-entrypoint.sh"]

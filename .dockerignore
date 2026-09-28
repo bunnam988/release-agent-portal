@@ -18,6 +18,7 @@ release-agent/.git
 # guarantee release-agent/.dockerignore gives when it's built standalone.
 release-agent/ccp_jira.env
 release-agent/*.env
+release-agent/sat-url.txt
 release-agent/*_state.yaml
 release-agent/release_session.yaml
 release-agent/stable2_*.yaml

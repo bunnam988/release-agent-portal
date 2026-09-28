@@ -82,7 +82,7 @@ CATALOG: list[Workflow] = [
             "release process."
         ),
         starter_command=(
-            "Run `python scripts/main_tagging_release.py --yes` and show its full output exactly "
+            "Run `python3 scripts/main_tagging_release.py --yes` and show its full output exactly "
             "as printed, without summarizing or skipping any repo."
         ),
         args=[_DRY_RUN],

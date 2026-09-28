@@ -25,12 +25,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Everything under /api except /api/auth/* and /api/health requires a valid
-# session cookie once a portal password is configured (see routers/auth.py
-# -- blank password = this is a no-op, same "opt-in" convention as
-# opencode_password). Enforced once here rather than a Depends() sprinkled
-# across every route in workflows.py/sessions.py so nothing can be added
-# later and accidentally left unprotected.
+# Everything under /api except /api/auth/* and /api/health(/live) requires a
+# valid session cookie once a portal password is configured (see
+# routers/auth.py -- blank password = this is a no-op, same "opt-in"
+# convention as opencode_password). Enforced once here rather than a
+# Depends() sprinkled across every route in workflows.py/sessions.py so
+# nothing can be added later and accidentally left unprotected.
 _PUBLIC_PATHS = ("/api/auth/", "/api/health")
 
 
@@ -40,7 +40,7 @@ async def enforce_auth(request: Request, call_next):
         auth_enabled()
         and request.url.path.startswith("/api/")
         and not request.url.path.startswith(_PUBLIC_PATHS[0])
-        and request.url.path != _PUBLIC_PATHS[1]
+        and not request.url.path.startswith(_PUBLIC_PATHS[1])
         and get_role(request) is None
     ):
         return JSONResponse(status_code=401, content={"detail": "Not logged in."})
@@ -87,12 +87,33 @@ async def handle_opencode_unreachable(request: Request, exc: httpx.RequestError)
     )
 
 
+@app.get("/api/health/live")
+async def health_live():
+    # Deliberately zero downstream dependency -- this is what CNAP's
+    # livenessProbe/startupProbe hit (see cnap-webservice.yaml), and a
+    # liveness *failure* kills and restarts the whole pod, unlike a
+    # readiness failure. /api/health below used to be what the probe
+    # hit, and it awaits opencode's own health with up to a 5s timeout --
+    # fine most of the time, but during a large batch run (100+ tickets)
+    # opencode can be legitimately busy long enough to miss the probe's
+    # much shorter window, and the *entire pod* (including that in-flight
+    # run) gets killed for it. This endpoint answers instantly regardless
+    # of what opencode is doing, so being busy is never mistaken for
+    # being dead.
+    return {"ok": True}
+
+
 @app.get("/api/health")
 async def health():
     # This endpoint's whole purpose is to report opencode's reachability
     # as *data* in a 200 response -- it must never itself fail just
     # because opencode is down, which is exactly what the global
     # httpx.RequestError handler above would otherwise do to it.
+    #
+    # Only used for the frontend's own connection indicator now (see
+    # useHealth.ts) -- NOT by CNAP's liveness/startup probes anymore
+    # (those hit /api/health/live above instead), so this being
+    # occasionally slow no longer risks the whole pod being killed.
     try:
         opencode_ok = await OpencodeClient().health()
     except httpx.RequestError:

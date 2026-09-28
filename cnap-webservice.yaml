@@ -40,15 +40,38 @@ spec:
 
   servicePort: 8000
 
+  # Points at /api/health/live, NOT /api/health -- that endpoint awaits
+  # opencode's own health with up to a 5s timeout, and a *liveness*
+  # probe failure kills and restarts the whole pod (unlike readiness).
+  # During a large batch run (100+ Jira tickets in one workflow turn)
+  # opencode can be legitimately busy long enough to miss a tight probe
+  # window, and the entire pod -- including that in-flight run -- got
+  # killed for it, seen as the frontend's "lost touch with the server"
+  # warning followed by the whole app going unresponsive. /api/health/live
+  # has zero downstream dependency, so opencode being busy is never
+  # mistaken for the pod being dead. See backend/app/main.py.
+  #
+  # periodSeconds/timeoutSeconds/failureThreshold: standard Kubernetes
+  # Probe fields (httpGet + initialDelaySeconds below already exactly
+  # match that shape) added as defense-in-depth on top of the endpoint
+  # fix above -- NOT independently confirmed against CNAP's own docs
+  # (couldn't reach the specific reference page), so double check these
+  # are actually honored if this needs tuning after a real deploy.
   livenessProbe:
     httpGet:
-      path: /api/health
+      path: /api/health/live
       port: 8000
+    periodSeconds: 15
+    timeoutSeconds: 10
+    failureThreshold: 5
   startupProbe:
     httpGet:
-      path: /api/health
+      path: /api/health/live
       port: 8000
     initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 10
+    failureThreshold: 6
 
   # Public route -- default is false (internal-only) if omitted. This
   # app is the one thing that's meant to be reachable from a browser.
