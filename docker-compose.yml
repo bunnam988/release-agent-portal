@@ -67,6 +67,15 @@ services:
       - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-replace-me@example.com}
       - GIT_COMMITTER_NAME=${GIT_COMMITTER_NAME:-RDK Release Agent (REPLACE BEFORE DEPLOY)}
       - GIT_COMMITTER_EMAIL=${GIT_COMMITTER_EMAIL:-replace-me@example.com}
+      # Which stored `gh` account (see the gh-hosts.yml credential, both
+      # accounts' tokens live in that one file) is the Mesh Components
+      # (rdk-gdcs org) identity -- a different account than the default
+      # core-nw (rdkcentral) one. See DESIGN.md "Mesh Components release
+      # support" for why two GitHub identities exist in one container, and
+      # release-agent/scripts/mesh_release_pipeline.sh /
+      # .opencode/skills/mesh-release-report/SKILL.md for where this is
+      # actually used (a `gh auth switch`, not a separate token file).
+      - GH_MESH_USER=${GH_MESH_USER:-}
     volumes:
       # Persist incremental run state across container restarts, mirroring
       # the PVC mount CNAP would provide. See DESIGN.md "Data Storage".

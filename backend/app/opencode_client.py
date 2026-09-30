@@ -118,16 +118,66 @@ class OpencodeClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def _descendant_session_ids(self, session_id: str) -> set[str]:
+        """session_id itself, plus every subagent/task session spawned
+        directly or transitively underneath it.
+
+        Needed because opencode's /permission and /question endpoints
+        return pending requests across *every* session with a flat
+        `sessionID` field -- a subagent's own permission request carries
+        the subagent's session ID, not its parent's. Naively filtering by
+        only the top-level session_id the portal/frontend knows about
+        (the URL route's session) silently misses every subagent-
+        originated request. Confirmed the hard way: a real mesh-release-
+        report run hung forever on an `rm -rf` "ask" permission raised by
+        a per-repo subagent, invisible to the portal's polling the whole
+        time (0 pending shown), with no way to answer it through the UI.
+        """
+        async with self._client() as client:
+            resp = await client.get("/session")
+            resp.raise_for_status()
+            sessions = resp.json()
+        children: dict[str, list[str]] = {}
+        for s in sessions:
+            parent = s.get("parentID")
+            if parent:
+                children.setdefault(parent, []).append(s["id"])
+        result = {session_id}
+        frontier = [session_id]
+        while frontier:
+            current = frontier.pop()
+            for child in children.get(current, []):
+                if child not in result:
+                    result.add(child)
+                    frontier.append(child)
+        return result
+
     async def list_permissions(self, session_id: str) -> list[dict[str, Any]]:
+        descendant_ids = await self._descendant_session_ids(session_id)
         async with self._client() as client:
             resp = await client.get("/permission")
             resp.raise_for_status()
-            return [p for p in resp.json() if p.get("sessionID") == session_id]
+            return [p for p in resp.json() if p.get("sessionID") in descendant_ids]
 
     async def reply_permission(self, session_id: str, request_id: str, allow: bool) -> None:
+        # The permission may belong to a subagent session, not session_id
+        # itself (see list_permissions above) -- opencode's reply
+        # endpoint is scoped by session in the URL path, so resolve the
+        # real owning session first rather than assuming it's always the
+        # top-level one the caller (the frontend, via the URL route) knows
+        # about. Falls back to session_id if the request is somehow gone
+        # by the time this runs (e.g. answered elsewhere/expired) -- the
+        # POST below will then 404, surfaced normally by the caller.
+        owning_session_id = session_id
         async with self._client() as client:
+            resp = await client.get("/permission")
+            resp.raise_for_status()
+            for p in resp.json():
+                if p.get("id") == request_id:
+                    owning_session_id = p.get("sessionID", session_id)
+                    break
             resp = await client.post(
-                f"/session/{session_id}/permissions/{request_id}",
+                f"/session/{owning_session_id}/permissions/{request_id}",
                 json={"response": "once" if allow else "reject"},
             )
             resp.raise_for_status()
@@ -136,11 +186,18 @@ class OpencodeClient:
         """Distinct from permissions: some skills use opencode's structured
         multi-choice `question` tool (e.g. "which Jira label should I use?")
         rather than a bash/edit permission gate.
+
+        Unlike permissions, opencode's reply/reject endpoints for
+        questions aren't session-scoped in the URL (`/question/{id}/...`
+        only), so no equivalent fix is needed in reply_question/
+        reject_question below -- only listing needed the descendant-tree
+        fix to make subagent-originated questions visible at all.
         """
+        descendant_ids = await self._descendant_session_ids(session_id)
         async with self._client() as client:
             resp = await client.get("/question")
             resp.raise_for_status()
-            return [q for q in resp.json() if q.get("sessionID") == session_id]
+            return [q for q in resp.json() if q.get("sessionID") in descendant_ids]
 
     async def reply_question(self, request_id: str, answers: list[list[str]]) -> None:
         async with self._client() as client:

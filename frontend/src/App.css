@@ -1243,6 +1243,112 @@ kbd {
   border-color: var(--primary);
 }
 
+/* ---------- Repo multi-select (main-tagging's --repos picker) ---------- */
+
+.arg-repo-multiselect {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.arg-repo-multiselect-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.repo-picker {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.repo-picker-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.repo-picker-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  min-width: 0;
+}
+
+.repo-picker-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.repo-picker-search input:focus {
+  outline: none;
+}
+
+.repo-picker-action {
+  flex-shrink: 0;
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.repo-picker-action:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.repo-picker-count {
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+
+.repo-picker-list {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.repo-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 0.82rem;
+  color: var(--text);
+  border-radius: var(--radius-sm);
+}
+
+.repo-picker-item:hover {
+  background: var(--bg-elevated);
+}
+
+.repo-picker-empty,
+.repo-picker-loading {
+  padding: 14px 10px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+
 .question-custom-input {
   margin: 4px 0 2px 22px;
   width: calc(100% - 22px);

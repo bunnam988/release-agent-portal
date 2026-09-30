@@ -566,6 +566,76 @@ step, not a code change:
   but won't warn about a *person's* name being there instead of a bot's,
   since that's the intended interim state right now.
 
+### Mesh Components release support
+
+A second, genuinely different release process, for a different set of
+repos: "Mesh components" (15 repos under the `rdk-gdcs` GitHub org) release
+via PR (`develop` -> release branch -> PR -> review -> merge to `main` ->
+GitHub release -> tag merged back to `develop`), not the direct git-flow
+tagging our existing `main-tagging`/stable2 pipeline uses for the 41
+"core-nw" repos (`rdkcentral` org, `config/tracked_repos.yaml`). Not a mode
+of the existing pipeline -- a separate one, ported from a standalone toolkit
+(`github-release-scripts`, mesh maintainers' own repo) that already existed
+for this before this portal did.
+
+**Rewritten off MCP, onto this repo's existing conventions.** The original
+toolkit's two skills used GitHub MCP + Jira MCP (Comcast Flow Intelligence
+Studio, personal OAuth per maintainer). This repo deliberately moved
+*away* from Jira MCP a while back onto `scripts/jira_rest.py` with a real
+service account, and never used GitHub MCP at all (always plain `gh`
+CLI) -- ported both skills onto those same mechanisms instead of
+introducing a second, inconsistent integration path and a second OAuth
+flow into the container.
+
+**Two separate GitHub identities, one container -- a real credential
+wrinkle.** The existing core-nw GitHub access (`gh auth login` as one
+person, baked in per "Credential status" above) does not have `rdk-gdcs`
+org access; a different account/token does. `gh` itself supports multiple
+stored accounts per host (confirmed: `~/.config/gh/hosts.yml` has a
+`users:` map, one active account switched via `gh auth switch`) -- but
+"active account" is a single, persistent, file-on-disk value shared by
+*everything* in the container, not per-session. If a mesh skill switched
+to the mesh identity and never switched back, the *next* core-nw run
+(main-tagging, stable2-*, anything using `gh`) would silently run as the
+wrong identity.
+
+Chosen approach: mesh skills explicitly `gh auth switch` to the mesh
+identity at their start and explicitly switch back to the default
+(core-nw) identity at the end, success or failure -- "borrow and return,"
+not touching any existing skill. This keeps the container's resting state
+always on the core-nw identity, which is what every already-existing,
+unmodified skill implicitly assumes. **Known, accepted residual risk**:
+this is a plain-English instruction in a skill file, not a guaranteed
+`finally` block -- if a mesh run is interrupted or crashes mid-flight
+before the "switch back" step, the wrong identity could be left active for
+whatever runs next. Worth revisiting if this turns out to happen in
+practice (e.g. a wrapper script that does the switch-back in a shell
+`trap` instead of relying on the agent's own instruction-following).
+
+Both GitHub identities' tokens live in the same baked-in `gh-hosts.yml`
+(see `deploy-credentials/README.md`) -- `gh`'s own hosts.yml format
+already supports multiple users per host in one file, so this needed no
+new credential-file mechanism, just both accounts present in the one file
+already baked in. `GH_MESH_USER` (new env var / `deploy-credentials/config.env`
+entry) names which stored account is the mesh identity, so the actual
+username isn't hardcoded into the skill files themselves.
+
+**Stage 2 (merge PRs, create the actual GitHub releases/tags) is exposed
+in the portal, not left external-only** -- per-request, unlike the
+original toolkit's own hard rule that its agent must never run stage 2
+itself. Implemented as its own separate, explicitly-mutating workflow
+with the same confirmation-gate pattern as every other irreversible
+action in this repo, not folded into the autonomous pipeline run.
+
+**Not yet verified end-to-end**: the mesh GitHub identity's `gh auth
+login` was not completed as of this writing (SSO/EMU login didn't
+register in `gh auth status`/`hosts.yml` after being attempted) -- the
+skills/scripts below are ported and internally consistent with this
+repo's conventions, but no real `rdk-gdcs` GitHub operation has actually
+been exercised against them yet. Treat as reviewed-but-unverified until
+that credential is in place and a real dry-run has been watched end to
+end.
+
 ### CNAP `WebService` schema — confirmed directly, not guessed
 
 Read `cnap.comcast.net/cnap`'s own docs (Microservices Journey -> Advanced

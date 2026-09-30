@@ -2,9 +2,14 @@ export interface WorkflowArg {
   name: string
   flag: string
   label: string
-  kind: 'flag' | 'text'
+  kind: 'flag' | 'text' | 'repo-multiselect'
   default?: string | null
   required?: boolean
+}
+
+export interface TrackedRepo {
+  slug: string
+  components: string[]
 }
 
 export interface Workflow {
@@ -123,6 +128,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function listWorkflows(): Promise<Workflow[]> {
   return request('/api/workflows')
+}
+
+export function getMainTaggingRepos(): Promise<TrackedRepo[]> {
+  return request('/api/workflows/main-tagging/repos')
 }
 
 // Maps MCP server id (e.g. "jira-ccp") -> connected. Used to grey out /

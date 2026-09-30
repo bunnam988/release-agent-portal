@@ -20,10 +20,14 @@ FROM node:22-slim
 # scripts the skills shell out to, not just LLM-in-context
 # reimplementations. python3-pip: needed for the FastAPI backend's own
 # requirements.txt below (release-agent's own scripts never needed pip,
-# just python3-yaml).
+# just python3-yaml). jq: release-agent/scripts/mesh-release-pipeline.sh
+# (Mesh Components release, see DESIGN.md) reads/writes its
+# release-config.json via jq, not python -- ported as-is from the
+# original toolkit rather than rewritten, so this is a real dependency,
+# not an optional nicety.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ripgrep git ca-certificates curl gnupg python3 python3-yaml python3-pip \
-    git-flow \
+    git-flow jq \
     && rm -rf /var/lib/apt/lists/*
 
 # auto-changelog — release-agent/scripts/main_tagging_release.py shells

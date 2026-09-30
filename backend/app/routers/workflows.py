@@ -1,5 +1,9 @@
-from fastapi import APIRouter, Request
+import os
 
+import yaml
+from fastapi import APIRouter, HTTPException, Request
+
+from ..config import settings
 from ..opencode_client import OpencodeClient
 from ..routers.auth import get_role
 from ..workflows import CATALOG
@@ -18,6 +22,35 @@ async def list_workflows(request: Request):
     role = get_role(request)
     visible = CATALOG if role == "admin" else [w for w in CATALOG if not w.admin_only]
     return [w.model_dump(exclude={"starter_command", "agent"}) for w in visible]
+
+
+@router.get("/main-tagging/repos")
+async def main_tagging_repos():
+    """The same repo list main_tagging_release.py itself reads from --
+    read directly here (not via an opencode session) purely to populate
+    the run modal's repo picker (see RunWorkflowModal.tsx), so listing
+    repos for the UI doesn't require starting an actual agent turn.
+    """
+    path = os.path.join(settings.workspace_root, "config", "tracked_repos.yaml")
+    try:
+        with open(path) as fh:
+            data = yaml.safe_load(fh) or {}
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=503,
+            detail="config/tracked_repos.yaml not found -- the repo list can't be loaded right now.",
+        )
+    repos = []
+    for r in data.get("repos", []):
+        url = r.get("url")
+        if not url:
+            continue
+        # "org/repo" is what the picker shows and what gets sent back as
+        # --repos -- matches the exact format main_tagging_release.py's
+        # own --repo/--repos filtering already expects.
+        slug = url.rstrip("/").replace("https://github.com/", "")
+        repos.append({"slug": slug, "components": r.get("components", [])})
+    return repos
 
 
 @router.get("/integrations")

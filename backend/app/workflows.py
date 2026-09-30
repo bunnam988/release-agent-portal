@@ -85,11 +85,16 @@ CATALOG: list[Workflow] = [
             "Run `python3 scripts/main_tagging_release.py --yes` and show its full output exactly "
             "as printed, without summarizing or skipping any repo."
         ),
-        args=[_DRY_RUN],
+        args=[
+            WorkflowArg(
+                name="repos", flag="--repos", label="Repos", kind="repo-multiselect", required=True
+            ),
+            _DRY_RUN,
+        ],
         mutating=True,
         category="primary",
         help_steps=[
-            "Checks every tracked repo's develop branch against its latest release tag.",
+            "Checks every selected repo's develop branch against its latest release tag — pick specific repos, or use Select All for the full tracked list.",
             "For any repo that's ahead, runs the standard git-flow release process: generates a changelog, creates the release tag, and pushes it.",
             "With Dry run checked, shows exactly what would be tagged/released without actually doing it.",
         ],
@@ -399,6 +404,90 @@ CATALOG: list[Workflow] = [
             "Finds and cherry-picks each ticket's merged PR(s) onto the GitHub branch you name.",
             "Computes a new hotfix tag per repo and updates SRCREV/PKGREV to match.",
             "Syncs any linked Gerrit changes under the Gerrit topic you specify.",
+        ],
+    ),
+    # ---- Mesh Components (rdk-gdcs org) -- a separate release process from
+    # everything above (which is all core-nw / rdkcentral). PR-based release
+    # to main, not direct git-flow tagging. See DESIGN.md "Mesh Components
+    # release support".
+    Workflow(
+        id="mesh-release-report",
+        label="Mesh Release Report",
+        description=(
+            "Read-only report of unreleased commits across the 15 Mesh "
+            "Components repos (rdk-gdcs): develop-vs-main diff, Jira status "
+            "per ticket, and which commits should be reverted. Writes nothing."
+        ),
+        starter_command="Use the mesh-release-report skill to find unreleased commits.",
+        args=[],
+        next_workflow_id="mesh-release-pipeline",
+        help_steps=[
+            "Diffs develop against main across all 15 Mesh Components repos (or a specific subset, if you give it repo names directly in a follow-up message).",
+            "Maps each unreleased commit to its Jira ticket and checks that ticket's status.",
+            "Flags any commit tied to a ticket that isn't RM Approved / Ready for Release Test / Ready for Patch Test as a revert candidate.",
+            "Read-only — this only reports; it never reverts anything, writes files, or touches GitHub/Jira beyond reading.",
+        ],
+    ),
+    Workflow(
+        id="mesh-release-ticket",
+        label="Mesh Release Ticket",
+        description=(
+            "Creates or updates a [DD-MM-YYYY] Mesh Components Release ticket "
+            "in the RDKB Jira project. Standalone — normally this happens "
+            "automatically as part of Mesh Release Pipeline."
+        ),
+        starter_command="Use the mesh-release-ticket skill to create a release ticket.",
+        args=[],
+        mutating=True,
+        help_steps=[
+            "Asks whether to create a new release ticket or update an existing one.",
+            "Create mode: opens a new RDKB Task titled '[today's date] Mesh Components Release', Priority P1.",
+            "Update mode: runs sanity checks on the target ticket (right title format, RDKB project, still-open status, created within 14 days) before writing anything.",
+            "Only ever writes the ticket's description field — never touches priority, status, or assignee.",
+        ],
+    ),
+    Workflow(
+        id="mesh-release-pipeline",
+        label="Mesh Release Pipeline",
+        description=(
+            "Full autonomous Mesh Components release: gathers data, "
+            "auto-reverts non-approved commits, classifies release type, "
+            "writes release-config.json, creates the Jira ticket, and runs "
+            "pipeline stage 1 (branches + PRs) — then stops before the "
+            "irreversible stage 2, which is a separate workflow."
+        ),
+        agent="mesh-release-pipeline",
+        starter_command="Start the Mesh Release Pipeline.",
+        args=[],
+        mutating=True,
+        category="primary",
+        next_workflow_id="mesh-release-stage2",
+        help_steps=[
+            "Runs the full mesh-release-report scan first, across all 15 rdk-gdcs repos.",
+            "Auto-reverts commits tied to non-RM-approved Jira tickets, and skips any repo where everything got reverted — no confirmation needed for this part.",
+            "Classifies each repo's release as minor (if any feature/* branch is included) or patch (otherwise) — never auto-picks major.",
+            "Writes release-config.json and creates the Jira release ticket automatically.",
+            "Runs pipeline stage 1 (creates release branches, opens PRs to main) — then stops. You review/approve the PRs, then run Mesh Release — Stage 2 yourself when ready.",
+        ],
+    ),
+    Workflow(
+        id="mesh-release-stage2",
+        label="Mesh Release — Stage 2 (Merge & Release)",
+        description=(
+            "Merges the pull requests from Mesh Release Pipeline's stage 1, "
+            "creates the actual GitHub releases/tags, and merges tags back "
+            "into develop. Irreversible — run only after reviewing the PRs."
+        ),
+        agent="mesh-release-stage2",
+        starter_command="Start Mesh Release stage 2 (merge and release).",
+        args=[_DRY_RUN],
+        mutating=True,
+        category="primary",
+        help_steps=[
+            "Reads release-config.json from the stage-1 run and shows the exact per-repo plan (versions, PR links) before doing anything.",
+            "Requires an explicit Y/n confirmation of that plan — this is the irreversible half of the mesh release, so there's no skipping this gate.",
+            "Merges each PR to main, creates the GitHub release/tag, and merges that tag back into develop.",
+            "With Dry run checked, shows the plan without merging or releasing anything.",
         ],
     ),
 ]

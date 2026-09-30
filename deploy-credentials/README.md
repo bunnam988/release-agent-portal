@@ -30,7 +30,16 @@ question that was never resolved before this switch).
 | `gerrit.netrc` | `/root/.netrc` |
 | `gh-hosts.yml` | `/root/.config/gh/hosts.yml` |
 | `opencode-auth.json` | `/root/.local/share/opencode/auth.json` |
-| `config.env` | Sourced directly as env vars (`PORTAL_ADMIN_PASSWORD`, `PORTAL_USER_PASSWORD`, `PORTAL_SESSION_SECRET`, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL`) -- only for whichever of these aren't already set some other way |
+| `config.env` | Sourced directly as env vars (`PORTAL_ADMIN_PASSWORD`, `PORTAL_USER_PASSWORD`, `PORTAL_SESSION_SECRET`, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL`, `GH_MESH_USER`) -- only for whichever of these aren't already set some other way |
+
+`GH_MESH_USER` names which account stored in `gh-hosts.yml` is the Mesh
+Components (`rdk-gdcs` org) GitHub identity -- a different account than
+the default core-nw (`rdkcentral`) one. **`gh-hosts.yml` must contain
+both accounts' tokens** (gh's own hosts.yml format supports multiple
+users per host in one file -- no second credential file needed, just log
+in with both accounts before generating this file). See DESIGN.md "Mesh
+Components release support" for the full rationale and the `gh auth
+switch` mechanism that actually uses this.
 
 **Never commit the real files.** Rebuilding the image after placing real
 files here is required for them to actually be included -- same as any

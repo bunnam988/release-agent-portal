@@ -1,8 +1,8 @@
-import { ChevronDown, ChevronUp, ListChecks } from 'lucide-react'
-import { useState } from 'react'
+import { ChevronDown, ChevronUp, ListChecks, Search } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import { startSession, type Workflow } from '../api/client'
+import { getMainTaggingRepos, startSession, type TrackedRepo, type Workflow, type WorkflowArg } from '../api/client'
 import Modal from './Modal'
 
 const INTEGRATION_LABELS: Record<string, string> = {
@@ -11,6 +11,117 @@ const INTEGRATION_LABELS: Record<string, string> = {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+/** Searchable checkbox picker for main-tagging's --repos arg. Value is
+ * kept as a single comma-joined string (matching how build_message
+ * assembles every non-flag arg into `--flag value`), not an array --
+ * this way no backend/schema change was needed beyond a new `kind`, the
+ * join/split is entirely a frontend concern. */
+function RepoMultiSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [repos, setRepos] = useState<TrackedRepo[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    getMainTaggingRepos()
+      .then(setRepos)
+      .catch((err) => setLoadError(errorMessage(err)))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const selected = new Set(value ? value.split(',') : [])
+  const filtered = repos.filter((r) => r.slug.toLowerCase().includes(search.toLowerCase()))
+
+  function toggle(slug: string) {
+    const next = new Set(selected)
+    if (next.has(slug)) next.delete(slug)
+    else next.add(slug)
+    onChange(Array.from(next).join(','))
+  }
+
+  if (loading) return <div className="repo-picker-loading">Loading repos…</div>
+  if (loadError) {
+    return (
+      <div className="banner error">
+        Couldn't load the repo list: {loadError}
+      </div>
+    )
+  }
+
+  return (
+    <div className="repo-picker">
+      <div className="repo-picker-toolbar">
+        <div className="repo-picker-search">
+          <Search size={14} />
+          <input
+            type="text"
+            placeholder="Search repos…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <button type="button" className="repo-picker-action" onClick={() => onChange(repos.map((r) => r.slug).join(','))}>
+          Select all ({repos.length})
+        </button>
+        <button type="button" className="repo-picker-action" onClick={() => onChange('')}>
+          Clear
+        </button>
+      </div>
+      <div className="repo-picker-count">
+        {selected.size} of {repos.length} selected
+      </div>
+      <div className="repo-picker-list">
+        {filtered.length === 0 && <div className="repo-picker-empty">No repos match "{search}"</div>}
+        {filtered.map((r) => (
+          <label key={r.slug} className="repo-picker-item">
+            <input type="checkbox" checked={selected.has(r.slug)} onChange={() => toggle(r.slug)} />
+            {r.slug}
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function renderArg(
+  arg: WorkflowArg,
+  value: string | boolean | undefined,
+  autoFocus: boolean,
+  setValue: (name: string, value: string | boolean) => void,
+) {
+  if (arg.kind === 'flag') {
+    return (
+      <label key={arg.name} className="arg-flag">
+        <input type="checkbox" onChange={(e) => setValue(arg.name, e.target.checked)} />
+        {arg.label}
+      </label>
+    )
+  }
+  if (arg.kind === 'repo-multiselect') {
+    return (
+      <div key={arg.name} className="arg-repo-multiselect">
+        <span className="arg-repo-multiselect-label">
+          {arg.label}
+          {arg.required && <span className="required-mark">*</span>}
+        </span>
+        <RepoMultiSelect value={(value as string) ?? ''} onChange={(v) => setValue(arg.name, v)} />
+      </div>
+    )
+  }
+  return (
+    <label key={arg.name} className="arg-text">
+      {arg.label}
+      {arg.required && <span className="required-mark">*</span>}
+      <input
+        type="text"
+        autoFocus={autoFocus}
+        placeholder={arg.required ? `${arg.label} (required)` : arg.label}
+        onChange={(e) => setValue(arg.name, e.target.value)}
+      />
+    </label>
+  )
 }
 
 interface RunWorkflowModalProps {
@@ -100,23 +211,7 @@ export default function RunWorkflowModal({ workflow, unavailableIntegrations, on
       {workflow.args.length > 0 && (
         <div className="modal-form">
           {workflow.args.map((arg) =>
-            arg.kind === 'flag' ? (
-              <label key={arg.name} className="arg-flag">
-                <input type="checkbox" onChange={(e) => setValue(arg.name, e.target.checked)} />
-                {arg.label}
-              </label>
-            ) : (
-              <label key={arg.name} className="arg-text">
-                {arg.label}
-                {arg.required && <span className="required-mark">*</span>}
-                <input
-                  type="text"
-                  autoFocus={workflow.args[0]?.name === arg.name}
-                  placeholder={arg.required ? `${arg.label} (required)` : arg.label}
-                  onChange={(e) => setValue(arg.name, e.target.value)}
-                />
-              </label>
-            ),
+            renderArg(arg, values[arg.name], workflow.args[0]?.name === arg.name, setValue),
           )}
         </div>
       )}

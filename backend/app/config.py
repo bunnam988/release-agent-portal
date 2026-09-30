@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     # Comma-separated list of origins allowed to call this API (the frontend).
     cors_origins: str = "http://localhost:5173"
 
+    # Where the release-agent submodule's own files live -- same container
+    # as opencode-server (see docker-entrypoint.sh's `cd /workspace`), read
+    # directly here only for UI concerns that need to list something from
+    # release-agent's own config (e.g. GET /api/workflows/main-tagging/repos
+    # reading config/tracked_repos.yaml for the repo picker) rather than
+    # driving a whole opencode session just to list a static file's contents.
+    workspace_root: str = "/workspace"
+
     # Two shared passwords gating the portal, one per role -- still not
     # per-user (the "enter your name" flow handles attribution on top of
     # this), just two shared secrets instead of one. Whichever one is
