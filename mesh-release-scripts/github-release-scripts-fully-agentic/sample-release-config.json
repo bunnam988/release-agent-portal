@@ -1,0 +1,10 @@
+{
+  "rdk-gdcs/wifi-mesh-experiments": {
+    "current-version": "v1.7.0",
+    "new-version": "v1.8.0",
+    "commits-to-revert": [],
+    "pull-request": "",
+    "pr-commit": "",
+    "summary": "- **Changes included:** abc1234 Add mesh topology optimization (feature/mesh-topo) → classified as **minor** since it originates from a `feature/*` branch.\n- **Changes reverted:** none.\n- **Version bump:** v1.7.0 → v1.8.0 (minor bump due to feature branch inclusion).\n- **Other notes:** no discrepancies found between tracked commits and `main`; no pre-existing release branch/PR detected."
+  }
+}

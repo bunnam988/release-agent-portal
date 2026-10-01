@@ -1,0 +1,35 @@
+# Static list of Mesh Components repos, under the `rdk-gdcs` GitHub org.
+#
+# Distinct from tracked_repos.yaml (the 41 "core-nw" component repos under
+# `rdkcentral`, released via main-tagging/stable2): Mesh components release
+# differently -- PR-based (develop -> release branch -> PR -> review -> merge
+# to main -> GitHub release -> tag merged back to develop), not direct
+# git-flow tagging. See DESIGN.md "Mesh Components release support" for the
+# full comparison and why this is a separate pipeline, not a mode of
+# main-tagging/stable2.
+#
+# Ported from the original toolkit's hardcoded component list (see
+# .opencode/skills/mesh-release-report/SKILL.md's own "Default list" --
+# kept in sync manually, same convention as tracked_repos.yaml).
+#
+# THIS FILE IS NOT AUTO-SYNCED. If a new mesh component repo is added,
+# add it here manually.
+
+github_org: "rdk-gdcs"
+
+repos:
+  - url: "https://github.com/rdk-gdcs/mesh-agent"
+  - url: "https://github.com/rdk-gdcs/mesh-wifi-optimizer"
+  - url: "https://github.com/rdk-gdcs/onewifi-extender"
+  - url: "https://github.com/rdk-gdcs/opensync-core-extender"
+  - url: "https://github.com/rdk-gdcs/opensync-core-gateway"
+  - url: "https://github.com/rdk-gdcs/opensync-fut"
+  - url: "https://github.com/rdk-gdcs/opensync-mso-comcast"
+  - url: "https://github.com/rdk-gdcs/opensync-platform-qca"
+  - url: "https://github.com/rdk-gdcs/opensync-platform-rdk"
+  - url: "https://github.com/rdk-gdcs/opensync-service-provider-comcast"
+  - url: "https://github.com/rdk-gdcs/opensync-thirdparty"
+  - url: "https://github.com/rdk-gdcs/opensync-vendor-comcast"
+  - url: "https://github.com/rdk-gdcs/opensync-vendor-plume"
+  - url: "https://github.com/rdk-gdcs/soc-qualcomm-qsdk"
+  - url: "https://github.com/rdk-gdcs/mesh-deps-toolkit"

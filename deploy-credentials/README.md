@@ -30,7 +30,13 @@ question that was never resolved before this switch).
 | `gerrit.netrc` | `/root/.netrc` |
 | `gh-hosts.yml` | `/root/.config/gh/hosts.yml` |
 | `opencode-auth.json` | `/root/.local/share/opencode/auth.json` |
-| `config.env` | Sourced directly as env vars (`PORTAL_ADMIN_PASSWORD`, `PORTAL_USER_PASSWORD`, `PORTAL_SESSION_SECRET`, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL`, `GH_MESH_USER`) -- only for whichever of these aren't already set some other way |
+| `config.env` | Sourced directly as env vars (`PORTAL_ADMIN_PASSWORD`, `PORTAL_USER_PASSWORD`, `PORTAL_SESSION_SECRET`, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL`, `RDKB_SAT_CLIENT_ID`, `RDKB_SAT_CLIENT_SECRET`, `GH_MESH_USER`) -- only for whichever of these aren't already set some other way |
+
+`RDKB_SAT_CLIENT_ID` / `RDKB_SAT_CLIENT_SECRET` are read by
+`backend/app/llm_token_proxy.py` (see that file for the full rationale)
+to fetch/refresh the Flow LLM gateway's 24h bearer token -- see
+`release-agent/sat-url.txt` for the exact token-fetch command these
+values came from (also gitignored, never committed).
 
 `GH_MESH_USER` names which account stored in `gh-hosts.yml` is the Mesh
 Components (`rdk-gdcs` org) GitHub identity -- a different account than

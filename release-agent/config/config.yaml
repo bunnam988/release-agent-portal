@@ -1,0 +1,44 @@
+# ──────────────────────────────────────────────
+# Release Agent Configuration
+# ──────────────────────────────────────────────
+
+# UPDATE THIS EVERY QUARTER
+release_branch: "26Q3_sprint"
+
+support_branch: "support/stable2"
+meta_support_branch: "stable2"
+
+# Gerrit (HTTPS — credentials come from ~/.netrc)
+# Keep host without scheme. Skills compose: https://{gerrit_host}/{gerrit_repo}
+gerrit_host: "gerrit.teamccp.com"
+gerrit_repo: "rdk/yocto_oe/layers/meta-rdk-broadband"
+
+# GitHub
+github_org: "rdkcentral"
+
+# Jira
+# API operations go through scripts/jira_rest.py, credentials from ccp_jira.env
+# (not MCP -- see that script's docstring). Keep only browse URL here, for xlsx
+# hyperlinks.
+jira_browse_url: "https://ccp.sys.comcast.net/browse/"
+
+# Tag naming rules — agent computes dynamically, do not hardcode base_tag here
+# Rule: get latest tag on main branch
+#   - If tag was created in current month  → increment 3rd digit: 2.4.0 → 2.4.1
+#   - If tag was created in previous month → increment 2nd digit: 2.4.0 → 2.5.0
+tag_format: "{major}.{minor}.{patch}"
+support_tag_format: "{base_tag}_stable2_{YYYYMMDD}"
+
+# Paths
+srcrev_file: "conf/include/generic-srcrev.inc"
+pkgrev_file: "conf/include/generic-pkgrev.inc"
+meta_sync_workspace: ".stable2-meta-sync"
+# UPDATE THIS : full path to open_source_commits_monitor.xlsx on local desktop
+commits_xlsx: "/mnt/c/Users/ssugumar/OneDrive - Comcast/Suganya/Biweekly Release/open_source_commits_monitor.xlsx"
+release_history_dir: "release_history"
+
+# Additional components to monitor even if not present in srcrev.inc
+# Add any hardcoded components here
+additional_components:
+  - name: "secure-upnp"
+    github_url: "https://github.com/rdkcentral/secure-upnp"

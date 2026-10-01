@@ -1,0 +1,35 @@
+.git
+.DS_Store
+._*
+.ruff_cache
+
+# Credential files - must never be baked into a deployable image (mirrors
+# .gitignore; unlike git, COPY . . in the Dockerfile doesn't respect
+# .gitignore, so this needs its own entry to actually be excluded from
+# the build context)
+ccp_jira.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# VS Code
+.vscode/
+
+# Session/run state - environment-specific, meant to come from a mounted
+# volume/PVC at runtime (see DESIGN.md "Data Storage"), not be shipped
+# inside the image itself
+*_state.yaml
+release_session.yaml
+stable2_*.yaml
+last_run.txt
+
+# Temporary files
+.main_tagging/
+/tmp/
+*.tmp
+*.log

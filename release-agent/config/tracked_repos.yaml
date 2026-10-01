@@ -1,0 +1,115 @@
+# Static, manually-maintained list of stable2-tracked component repos.
+#
+# Resolved ONCE from meta-rdk-broadband generic-srcrev.inc (release_branch
+# from config.yaml at the time of resolution) using the parsing rules in
+# specs/srcrev-parsing.md: find SRCREV_pn-<component> lines, look up each
+# component's recipe SRC_URI, resolve the GitHub repo.
+#
+# track-for-stable2 reads this file directly for its repo scan scope instead
+# of re-cloning meta-rdk-broadband and re-resolving recipes on every run.
+#
+# THIS FILE IS NOT AUTO-SYNCED. If a new component/repo is added to the
+# meta-layer, add it here manually (both to `components` and to `repos`).
+
+resolved_at: "2026-09-19"
+resolved_from:
+  gerrit_repo: "rdk/yocto_oe/layers/meta-rdk-broadband"
+  branch: "26Q3_sprint"
+  file: "conf/include/generic-srcrev.inc"
+
+# Deduplicated GitHub repo scan scope (what track-for-stable2 actually uses).
+# Several components legitimately share one repo (e.g. all hal-*-generic
+# components live in rdkcentral/hardware-abstraction-layer). Cross-checked
+# against the current track_for_stable2_state.yaml (41 repos) and matches
+# exactly.
+repos:
+  - url: "https://github.com/rdkcentral/advanced-security"
+    components: ["ccsp-adv-security"]
+  - url: "https://github.com/rdkcentral/cable-modem-agent"
+    components: ["ccsp-cm-agent"]
+  - url: "https://github.com/rdkcentral/cellular-manager"
+    components: ["rdk-cellularmanager"]
+  - url: "https://github.com/rdkcentral/common-library"
+    components: ["ccsp-common-library", "ccsp-common-library-native"]
+  - url: "https://github.com/rdkcentral/component-registry"
+    components: ["ccsp-cr"]
+  - url: "https://github.com/rdkcentral/core-net-library"
+    components: ["core-net-lib"]
+  - url: "https://github.com/rdkcentral/data-model-cli"
+    components: ["ccsp-dmcli"]
+  - url: "https://github.com/rdkcentral/dhcp-manager"
+    components: ["ccsp-dhcp-mgr"]
+  - url: "https://github.com/rdkcentral/ethernet-agent"
+    components: ["ccsp-eth-agent"]
+  - url: "https://github.com/rdkcentral/gw-provisioning-application"
+    components: ["ccsp-gwprovapp"]
+  - url: "https://github.com/rdkcentral/gw-provisioning-ethernet-wan"
+    components: ["ccsp-gwprovapp-ethwan"]
+  - url: "https://github.com/rdkcentral/halinterface"
+    components: ["halinterface"]
+  - url: "https://github.com/rdkcentral/hardware-abstraction-layer"
+    components: ["hal-bridgeutil", "hal-cm-generic", "hal-dhcpv4c-generic", "hal-ethsw-generic", "hal-firewall-generic", "hal-moca-generic", "hal-mso-mgmt-generic", "hal-mta-generic", "hal-platform-generic", "hal-vlan-generic", "hal-wifi-generic"]
+  - url: "https://github.com/rdkcentral/harvester"
+    components: ["harvester"]
+  - url: "https://github.com/rdkcentral/home-security"
+    components: ["ccsp-home-security"]
+  - url: "https://github.com/rdkcentral/hotspot"
+    components: ["ccsp-hotspot"]
+  - url: "https://github.com/rdkcentral/javascript-templates"
+    components: ["jst"]
+  - url: "https://github.com/rdkcentral/json-hal-library"
+    components: ["json-hal-lib"]
+  - url: "https://github.com/rdkcentral/lan-manager"
+    components: ["lanmanager"]
+  - url: "https://github.com/rdkcentral/lan-manager-lite"
+    components: ["ccsp-lm-lite"]
+  - url: "https://github.com/rdkcentral/media-terminal-adapter-agent"
+    components: ["ccsp-mta-agent"]
+  - url: "https://github.com/rdkcentral/miscellaneous-broadband"
+    components: ["ccsp-misc"]
+  - url: "https://github.com/rdkcentral/moca-agent"
+    components: ["ccsp-moca"]
+  - url: "https://github.com/rdkcentral/mtu-modifier"
+    components: ["ccsp-hotspot-kmod"]
+  - url: "https://github.com/rdkcentral/notify-component"
+    components: ["notify-comp"]
+  - url: "https://github.com/rdkcentral/open-virtual-switch-agent"
+    components: ["ovs-agent"]
+  - url: "https://github.com/rdkcentral/persistent-storage-manager"
+    components: ["ccsp-psm"]
+  - url: "https://github.com/rdkcentral/platform-manager"
+    components: ["rdk-fwupgrade-manager"]
+  - url: "https://github.com/rdkcentral/power-manager"
+    components: ["powermgr"]
+  - url: "https://github.com/rdkcentral/provisioning-and-management"
+    components: ["ccsp-p-and-m"]
+  - url: "https://github.com/rdkcentral/snmp-protocol-agent"
+    components: ["ccsp-snmp-pa"]
+  - url: "https://github.com/rdkcentral/secure-upnp"
+    components: []
+    source: "config.yaml additional_components (not in generic-srcrev.inc)"
+  - url: "https://github.com/rdkcentral/start-parodus"
+    components: ["start-parodus"]
+  - url: "https://github.com/rdkcentral/sysint-broadband"
+    components: ["sysint-broadband"]
+  - url: "https://github.com/rdkcentral/test-and-diagnostic"
+    components: ["test-and-diagnostic"]
+  - url: "https://github.com/rdkcentral/tr069-protocol-agent"
+    components: ["ccsp-tr069-pa"]
+  - url: "https://github.com/rdkcentral/utopia"
+    components: ["utopia"]
+  - url: "https://github.com/rdkcentral/webui"
+    components: ["ccsp-webui-jst", "ccsp-webui-php"]
+  - url: "https://github.com/rdkcentral/webui-bwg"
+    components: ["ccsp-webui-bci-jst", "ccsp-webui-bci-php"]
+  - url: "https://github.com/rdkcentral/xconf-client"
+    components: ["ccsp-xconf"]
+  - url: "https://github.com/rdkcentral/xdns"
+    components: ["ccsp-xdns"]
+
+# Components present in generic-srcrev.inc with no resolvable recipe/SRC_URI
+# in this layer (per specs/srcrev-parsing.md "Special Cases" — kept for
+# visibility, NOT scanned since there is no known GitHub repo for them).
+unresolved_components:
+  - "hal-epon-generic"
+  - "xupnp"

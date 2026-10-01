@@ -1,16 +1,18 @@
 #!/bin/bash
-# Single-container entrypoint: runs opencode-server and the FastAPI
-# backend as two processes in the same container (see Dockerfile), so
-# this matches the one-container-per-app CNAP pattern used elsewhere on
-# this team instead of needing a separate WebService + internal-only
-# routing for opencode-server.
+# Single-container entrypoint: runs opencode-server, the FastAPI
+# backend, and the LLM token-injection proxy as three processes in the
+# same container (see Dockerfile), matching the one-container-per-app
+# CNAP pattern used elsewhere on this team instead of needing separate
+# WebServices + internal-only routing between them.
 #
-# opencode-server binds 127.0.0.1 only -- it is never a separate network
-# endpoint even inside the container's own namespace, only reachable via
-# localhost from the backend process started below (see
-# backend/app/config.py's opencode_url default). This is deliberate: it
-# holds every real credential (GitHub token, Gerrit .netrc, ccp_jira.env)
-# and has no auth of its own.
+# opencode-server and the LLM proxy both bind 127.0.0.1 only -- neither
+# is ever a separate network endpoint even inside the container's own
+# namespace, only reachable via localhost from the processes started
+# below (see backend/app/config.py's opencode_url default, and
+# opencode.json's provider.rdkb-release-agent.options.baseURL). This is
+# deliberate: opencode holds every real credential (GitHub token, Gerrit
+# .netrc, ccp_jira.env) and the proxy holds the LLM gateway's bearer
+# token -- neither has any auth of its own beyond that.
 set -e
 
 cd /workspace
@@ -86,23 +88,41 @@ case "$current_name" in
     ;;
 esac
 
+# LLM token-injection proxy -- see backend/app/llm_token_proxy.py for
+# why this exists (opencode reads its provider apiKey once at startup,
+# but the Flow gateway's SAT token expires every 24h; this proxy
+# refreshes it lazily on every request instead of needing opencode
+# itself to restart). Started before opencode so it's already up by the
+# time any real model request happens.
+#
+# IMPORTANT: run this and uvicorn in a subshell with their own `cd`,
+# not the top-level shell's -- `cd /app` here previously changed the
+# *whole script's* working directory for everything after it,
+# including opencode serve below, which silently made opencode look
+# for /app/opencode.json (doesn't exist) instead of the real
+# /workspace/opencode.json this entire deployment's provider config
+# lives in. Confirmed via opencode's own logs (`directory=/app`) after
+# a real provider silently never loading at all despite the config file
+# itself being completely correct.
+(cd /app && exec uvicorn app.llm_token_proxy:app --host 127.0.0.1 --port 4097) &
+LLM_PROXY_PID=$!
+
 opencode serve --hostname 127.0.0.1 --port 4096 &
 OPENCODE_PID=$!
 
-cd /app
-uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+(cd /app && exec uvicorn app.main:app --host 0.0.0.0 --port 8000) &
 UVICORN_PID=$!
 
-# Forward termination signals to both children instead of only killing
-# whichever one happens to be PID 1.
-trap 'kill -TERM "$OPENCODE_PID" "$UVICORN_PID" 2>/dev/null || true' TERM INT
+# Forward termination signals to all three children instead of only
+# killing whichever one happens to be PID 1.
+trap 'kill -TERM "$LLM_PROXY_PID" "$OPENCODE_PID" "$UVICORN_PID" 2>/dev/null || true' TERM INT
 
-# If either process exits -- crash or otherwise -- stop the other and
+# If any one process exits -- crash or otherwise -- stop the others and
 # exit the container. A k8s liveness/startup probe hitting a
 # half-broken container (one process silently dead) is worse than the
 # whole pod restarting cleanly.
-wait -n "$OPENCODE_PID" "$UVICORN_PID"
+wait -n "$LLM_PROXY_PID" "$OPENCODE_PID" "$UVICORN_PID"
 EXIT_CODE=$?
-kill -TERM "$OPENCODE_PID" "$UVICORN_PID" 2>/dev/null || true
+kill -TERM "$LLM_PROXY_PID" "$OPENCODE_PID" "$UVICORN_PID" 2>/dev/null || true
 wait
 exit "$EXIT_CODE"

@@ -1,3 +1,0 @@
-[submodule "release-agent"]
-	path = release-agent
-	url = git@github.com:bunnam988/release-agent.git

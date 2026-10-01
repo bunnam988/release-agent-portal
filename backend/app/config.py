@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     # driving a whole opencode session just to list a static file's contents.
     workspace_root: str = "/workspace"
 
+    # provider/model to explicitly request on every session start and
+    # every message send (see opencode_client.py -- opencode's legacy
+    # /session API does NOT reliably fall back to opencode.json's
+    # top-level "model" default; confirmed by a real session coming back
+    # on github-copilot/claude-sonnet-4.6 despite that not being the
+    # configured default at all, exactly the same class of bug already
+    # found and worked around for `agent`). Must match a provider/model
+    # actually defined in release-agent/opencode.json's `provider` block.
+    model: str = "rdkb-release-agent/claude-4-6-sonnet"
+
     # Two shared passwords gating the portal, one per role -- still not
     # per-user (the "enter your name" flow handles attribution on top of
     # this), just two shared secrets instead of one. Whichever one is

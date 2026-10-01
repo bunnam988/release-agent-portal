@@ -1,0 +1,36 @@
+# Credential files - never commit
+ccp_jira.env
+*.env
+sat-url.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.ruff_cache/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+._*
+
+# Session state files (produced by running skills, not part of the project)
+*_state.yaml
+release_session.yaml
+stable2_*.yaml
+last_run.txt
+pr_list.yaml
+stable2_ready_tickets.txt
+
+# Cloned/prepared workspaces (runtime artifacts, not source)
+.main_tagging/
+.stable2-meta-sync/
+
+# Temporary files
+/tmp/
+*.tmp
+*.log

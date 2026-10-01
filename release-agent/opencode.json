@@ -1,0 +1,48 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "model": "rdkb-release-agent/claude-4-6-sonnet",
+
+  "provider": {
+    "rdkb-release-agent": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "RDKB Release Agent (Flow)",
+      "options": {
+        "baseURL": "http://127.0.0.1:4097"
+      },
+      "models": {
+        "claude-4-6-sonnet": {
+          "name": "Claude 4.6 Sonnet",
+          "limit": {
+            "context": 200000,
+            "output": 64000
+          }
+        }
+      }
+    }
+  },
+
+  "skills": {
+    "paths": [".agents/skills"]
+  },
+
+  "mcp": {
+    "jira-ccp": {
+      "type": "remote",
+      "url": "https://flow.api.de.comcast.com/orgs/ide-common/pools/jira-ccp/mcp",
+      "enabled": false,
+      "oauth": {}
+    }
+  },
+
+  "permission": {
+    "edit": "allow",
+    "bash": {
+      "*": "allow",
+      "rm -rf *": "ask",
+      "git push --force*": "ask",
+      "git push -f*": "ask",
+      "sudo *": "deny"
+    }
+  }
+}

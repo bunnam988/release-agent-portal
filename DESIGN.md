@@ -542,7 +542,7 @@ Rollout order:
 | Jira | **Real service account, done** | `svc-autotriage`, via `ccp_jira.env` + `scripts/jira_rest.py` — verified with real `EDIT_ISSUES`/`LINK_ISSUE`/`CREATE_ISSUES` permissions. Not personal, not MCP. No further work needed here. |
 | GitHub | **Interim: personal** | `gh auth login` done once against the deployed container (token in the `gh-auth` volume). Real PRs/releases are created as this person, not a bot. |
 | Gerrit | **Interim: personal** | HTTPS credential in a mounted `.netrc`. Real pushes/cherry-picks are authenticated as this person. |
-| GitHub Copilot (model provider) | **Interim: personal** | `opencode providers login` done once against the deployed container (token in the `opencode-auth` volume). |
+| Model provider | **Real service account, done** | Swapped from personal GitHub Copilot OAuth to a dedicated Flow LLM gateway (`orgs/rdkb-release-agent/modelgws/rdkb-middleware-release-agent`), authenticated via SAT client-credentials (`RDKB_SAT_CLIENT_ID`/`RDKB_SAT_CLIENT_SECRET`), not a person's own login. See "Model provider: Flow gateway with 24h token refresh" below for the full mechanism. |
 
 ### Swapping to service accounts later (no code changes needed)
 
@@ -554,10 +554,8 @@ step, not a code change:
 - **GitHub**: run `gh auth login` inside the container again with the
   service account (or provision a GitHub App install instead of a personal
   token, which is the better long-term answer for org-repo access).
-- **GitHub Copilot**: run `opencode providers login` again with whatever
-  non-interactive credential Comcast's Copilot/CNAP administrators provide
-  (still an open question on their side — a personal login remains the
-  fallback until then).
+- **Model provider**: done already -- see "Model provider: Flow gateway
+  with 24h token refresh" below, no longer an open item.
 - **Git commit identity**: set `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`/
   `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL` (see `docker-compose.yml`) to
   the service account's identity instead of whichever person's name is
@@ -565,6 +563,78 @@ step, not a code change:
   warning on startup if these are ever left at the unconfigured placeholder,
   but won't warn about a *person's* name being there instead of a bot's,
   since that's the intended interim state right now.
+
+### Model provider: Flow gateway with 24h token refresh
+
+Replaced personal GitHub Copilot OAuth with a real, dedicated Flow LLM
+gateway (`https://flow.api.de.comcast.com/orgs/rdkb-release-agent/modelgws/rdkb-middleware-release-agent`).
+Originally set up against `gpt-4o` (the first model confirmed available on
+this specific gateway pool). Later found, by checking Flow's own model
+catalog (Models page in Flow:Intel Studio), that the *same* gateway pool
+also directly serves several Claude models via `aws_bedrock_comcast`
+(`claude-4-5-sonnet`, `claude-4-6-sonnet`, `claude-4-sonnet`) -- just a
+different `model` value in the request body, no separate pool/URL needed.
+Switched to `claude-4-6-sonnet` for closer behavioral parity with the
+previously-deployed `github-copilot/claude-sonnet-5`. Configured in
+`release-agent/opencode.json` as a custom `@ai-sdk/openai-compatible`
+provider (`rdkb-release-agent/claude-4-6-sonnet`), per opencode's own
+documented config shape for this exact case. Context/output limits
+(200000/64000) are from directly probing the gateway (a 64000-token
+`max_tokens` request succeeded), not the model's own published Bedrock
+limits, which may differ -- revisit if a real run ever hits either
+ceiling.
+
+**Why a local proxy, not just a static API key**: the gateway issues a
+SAT (client-credentials OAuth) bearer token valid for only 24 hours.
+opencode reads its provider `apiKey` once at startup -- a refreshed
+token would never reach an already-running opencode process without
+restarting it, and restarting risks killing a live session if the
+timing is unlucky.
+
+Adapted (not copied verbatim -- it couldn't be, see below) the lazy
+refresh-with-expiry-cache pattern from a teammate's separate project
+(`jira_autotriage`'s `JiraClassifierService._get_api_key`): check a
+cached token's expiry before each call, refresh if needed, cache the
+new one. That pattern works there because his own Python code makes
+the LLM calls directly, in the same process. opencode is a *different*
+process we don't control the internals of, so instead of putting that
+logic inside opencode, `backend/app/llm_token_proxy.py` is a small
+local reverse proxy (127.0.0.1 only, never a separate network
+endpoint -- same rationale as opencode-server itself) that opencode's
+`baseURL` points at instead of the real gateway. It does the exact same
+lazy check-and-refresh on every incoming request, then forwards with a
+guaranteed-fresh token. Zero restarts needed anywhere, for opencode or
+the proxy.
+
+`RDKB_SAT_CLIENT_ID`/`RDKB_SAT_CLIENT_SECRET` are baked in via
+`deploy-credentials/config.env`, same mechanism as every other
+credential on this deployment (see "Credential status" above).
+
+**Verified real, end-to-end, not just "the code looks right"** -- for
+both models this provider has used:
+- `gpt-4o` (original): hit the proxy directly with a real chat
+  completion, then created an actual opencode session and sent it a
+  message through that exact provider/model config, got the exact
+  reply back.
+- `claude-4-6-sonnet` (current, after discovering via Flow's own Models
+  page that the same gateway pool also serves several Claude models,
+  not just gpt-4o): re-ran the same two checks. Raw gateway call with
+  `model: claude-4-6-sonnet` returned a real response directly from
+  Comcast's `aws_bedrock_comcast` Flow pool. Then a real opencode
+  session (`POST /session` with `providerID: rdkb-release-agent`,
+  `modelID: claude-4-6-sonnet`, followed by a real message) came back
+  with `providerID`/`modelID` echoed correctly in the response *and*
+  the exact reply text asked for -- confirming the full chain (opencode
+  → proxy → SAT token fetch → real gateway → claude-4-6-sonnet →
+  response) actually works, not just that each piece individually looks
+  correct.
+
+**Known, accepted limitation**: no coordination with
+`backend/app/routers/sessions.py`'s `mutating_lock` for the (rare,
+~once-per-23h) token refresh -- refresh happens on the *next* request
+after the cached token nears expiry, not proactively on a timer, so in
+practice a refresh only ever happens right before a request needs one
+anyway, not during an unrelated idle moment mid-session.
 
 ### Mesh Components release support
 

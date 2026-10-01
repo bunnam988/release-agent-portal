@@ -63,9 +63,15 @@ class OpencodeClient:
             resp.raise_for_status()
             return {name: info.get("status") == "connected" for name, info in resp.json().items()}
 
+    @staticmethod
+    def _provider_and_model() -> tuple[str, str]:
+        provider_id, _, model_id = settings.model.partition("/")
+        return provider_id, model_id
+
     async def create_session(self, title: str | None = None, agent: str | None = None) -> dict[str, Any]:
+        provider_id, model_id = self._provider_and_model()
         async with self._client() as client:
-            body: dict[str, Any] = {}
+            body: dict[str, Any] = {"providerID": provider_id, "modelID": model_id}
             if agent:
                 body["agent"] = agent
             if title:
@@ -93,7 +99,19 @@ class OpencodeClient:
         # orchestrator run turned out to have actually been running as
         # the generic build agent the whole time. Callers must pass the
         # workflow's agent on every send, not just when starting.
-        body: dict[str, Any] = {"parts": [{"type": "text", "text": text}]}
+        #
+        # providerID/modelID matter on every call too, same failure mode:
+        # a real session came back on github-copilot/claude-sonnet-4.6
+        # despite that provider not being configured as the default at
+        # all -- opencode's legacy /session API does not reliably fall
+        # back to opencode.json's top-level "model" default without this
+        # being explicit on every message.
+        provider_id, model_id = self._provider_and_model()
+        body: dict[str, Any] = {
+            "parts": [{"type": "text", "text": text}],
+            "providerID": provider_id,
+            "modelID": model_id,
+        }
         if agent:
             body["agent"] = agent
         async with self._client(timeout=None) as client:
