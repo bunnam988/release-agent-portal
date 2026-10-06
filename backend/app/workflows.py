@@ -82,8 +82,11 @@ CATALOG: list[Workflow] = [
             "release process."
         ),
         starter_command=(
-            "Run `python3 scripts/main_tagging_release.py --yes` and show its full output exactly "
-            "as printed, without summarizing or skipping any repo."
+            "Run `python3 scripts/main_tagging_release.py --yes` for every repo given below. "
+            "Follow AGENTS.md's final-result format exactly -- do not paste the script's raw "
+            "stdout/stderr into your reply (it's already visible per-command in the portal's own "
+            "activity log); your reply must be the summary plus a TABLE row per repo processed "
+            "(columns: Repo, Status, Tag, Notes)."
         ),
         args=[
             WorkflowArg(
@@ -364,10 +367,11 @@ CATALOG: list[Workflow] = [
         id="on-demand-cherry-pick",
         label="On-Demand Cherry-Pick",
         description=(
-            "Takes one or more Jira tickets, cherry-picks their PRs to a "
-            "branch you specify, computes a new tag per repo, updates "
-            "SRCREV/PKGREV, and syncs any linked Gerrit changes under a "
-            "shared topic."
+            "Takes one or more Jira tickets, cherry-picks their PRs to each "
+            "repo's own GitHub branch (resolved automatically from the Gerrit "
+            "branch you specify, via that repo's tag in meta-rdk-broadband), "
+            "computes a new tag per repo, updates SRCREV/PKGREV, and syncs "
+            "any linked Gerrit changes under a shared topic."
         ),
         agent="on-demand-cherry-pick",
         starter_command="Start the on-demand cherry-pick workflow.",
@@ -376,13 +380,6 @@ CATALOG: list[Workflow] = [
                 name="tickets",
                 flag="--tickets",
                 label="Jira ticket(s) — comma-separated if more than one",
-                kind="text",
-                required=True,
-            ),
-            WorkflowArg(
-                name="github_branch",
-                flag="--github-branch",
-                label="GitHub target branch",
                 kind="text",
                 required=True,
             ),
@@ -401,7 +398,8 @@ CATALOG: list[Workflow] = [
         admin_only=False,
         help_steps=[
             "Takes the Jira ticket(s) you specify — comma-separated if more than one.",
-            "Finds and cherry-picks each ticket's merged PR(s) onto the GitHub branch you name.",
+            "Resolves each repo's GitHub branch automatically from the Gerrit branch you name (via its tag in meta-rdk-broadband's pkgrev.inc).",
+            "Finds and cherry-picks each ticket's merged PR(s) onto that resolved branch.",
             "Computes a new hotfix tag per repo and updates SRCREV/PKGREV to match.",
             "Syncs any linked Gerrit changes under the Gerrit topic you specify.",
         ],

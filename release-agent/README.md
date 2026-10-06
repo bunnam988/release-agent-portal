@@ -107,7 +107,7 @@ between phases so nothing runs unattended.
 |---|---|
 | `stable2-release-orchestrator` | Runs the full stable2 release pipeline end to end (track → filter → evaluate → collect PRs → meta sync), with a confirmation gate between each phase. |
 | `stable2-meta-sync-orchestrator` | The second half of the pipeline above, invoked as its final phase: GitHub cherry-pick, tracking ticket creation, considered-labeling, GitHub tagging, SRCREV update, and Gerrit cherry-pick/squash — all under one shared topic. |
-| `on-demand-cherry-pick` | A standalone, on-demand path for one or more Jira tickets outside the biweekly cycle: cherry-picks their PRs to a branch you choose, computes a hotfix tag per repo, updates SRCREV/PKGREV, and syncs the linked Gerrit changes. Fully isolated from the biweekly pipeline's own state files. |
+| `on-demand-cherry-pick` | A standalone, on-demand path for one or more Jira tickets outside the biweekly cycle: cherry-picks their PRs to each repo's GitHub branch (resolved automatically from the Gerrit branch you choose, via that repo's tag in meta-rdk-broadband), computes a hotfix tag per repo, updates SRCREV/PKGREV, and syncs the linked Gerrit changes. Fully isolated from the biweekly pipeline's own state files. |
 
 ## Scripts
 

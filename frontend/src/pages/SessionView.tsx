@@ -4,12 +4,16 @@ import {
   ArrowLeft,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Clock,
   Copy,
   Download,
   Loader2,
   Send,
   ShieldQuestion,
+  Terminal,
+  XCircle,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
@@ -40,6 +44,8 @@ interface Part {
   text: string
   tool?: string
   toolStatus?: string
+  toolCommand?: string
+  toolOutput?: string
 }
 
 function errorMessage(err: unknown): string {
@@ -103,8 +109,551 @@ function countCompletedPhases(partOrder: string[], parts: Record<string, Part>):
 // the agent asking something rather than delivering a final report --
 // every final report in this project's skills is declarative/tabular,
 // never phrased as a question.
+//
+// Some agents (e.g. on-demand-cherry-pick) wrap their whole plan,
+// including this trailing question, in one fenced code block -- so the
+// message's literal last characters are a closing ``` rather than the
+// question itself. Strip a trailing fence before checking, so this still
+// recognizes the prompt instead of falsely reporting the run as done.
+function stripTrailingFence(text: string): string {
+  return text.trimEnd().replace(/```\s*$/, '').trimEnd()
+}
+
 function endsWithConfirmationPrompt(text: string): boolean {
-  return /\?\s*(?:[[(]\s*y\s*\/\s*n\s*[\])])?\s*$/i.test(text.trimEnd())
+  return /\?\s*(?:[[(]\s*y\s*\/\s*n\s*[\])])?\s*$/i.test(stripTrailingFence(text))
+}
+
+// Pulls out just the trailing "Proceed to Phase 2? [Y/n]" (or similar)
+// question so it can be shown as its own actionable prompt, instead of
+// echoing the whole message (which usually also contains a PHASE N
+// COMPLETE block already rendered as a stage card) a second time.
+function extractTrailingPrompt(text: string): string | null {
+  if (!endsWithConfirmationPrompt(text)) return null
+  const paragraphs = stripTrailingFence(text).split(/\n\s*\n/)
+  return paragraphs[paragraphs.length - 1].trim()
+}
+
+// Strips the mechanical "PHASE N COMPLETE" report blocks and the
+// orchestrator's own closing ascii banner out of a message, leaving only
+// whatever plain-language prose (if any) surrounds them. Both of those
+// are already rendered as their own clean cards elsewhere (stage-results
+// / FinalSummaryCard), so repeating their raw text in the Output panel
+// would just look like a pasted-in terminal log.
+function stripReportingNoise(text: string): string {
+  const lines = text.split('\n')
+  const isDivider = (l: string) => /^[-─_=]{5,}$/.test(l.trim())
+  const remove = new Array(lines.length).fill(false)
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^PHASE \d+ COMPLETE$/i.test(lines[i].trim())) continue
+    let j = i
+    remove[j] = true
+    j++
+    while (j < lines.length && (isDivider(lines[j]) || lines[j].trim() === '')) {
+      remove[j] = true
+      j++
+    }
+    if (/^Results from (.+):$/i.test(lines[j]?.trim() ?? '')) {
+      remove[j] = true
+      j++
+    }
+    while (j < lines.length && lines[j].trim() !== '' && /^\s{2,}[^:]+?:\s*.*$/.test(lines[j])) {
+      remove[j] = true
+      j++
+    }
+    i = j - 1
+  }
+
+  const bannerIdx = lines.findIndex((l) => /COMPLETE/.test(l) && /[═║╔╚]/.test(l))
+  if (bannerIdx !== -1) {
+    for (let i = bannerIdx; i < lines.length; i++) remove[i] = true
+  }
+
+  return lines
+    .filter((_, i) => !remove[i])
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+interface ResultTable {
+  headers: string[]
+  rows: string[][]
+}
+
+interface ResultBlock {
+  status: 'success' | 'partial' | 'blocked'
+  summary: string
+  table: ResultTable | null
+  details: string[]
+  nextSteps: string[]
+  before: string
+}
+
+// A markdown pipe-table: header row, a `---`-style separator row, then
+// data rows. Tolerant of surrounding whitespace and optional leading/
+// trailing `|` since models are inconsistent about those.
+function parseMarkdownTable(block: string): ResultTable | null {
+  const lines = block
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith('|'))
+  if (lines.length < 2) return null
+  const splitRow = (line: string) =>
+    line
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((cell) => cell.trim())
+  const headers = splitRow(lines[0])
+  const rows = lines
+    .slice(1)
+    .filter((l) => !/^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$/.test(l))
+    .map(splitRow)
+  return headers.length ? { headers, rows } : null
+}
+
+// Every skill's final message is free-text prose that varies in shape --
+// AGENTS.md instructs the agent to append one standard ===RESULT=== block
+// at the very end of a truly-finished run (see that file), so the UI can
+// render the same fixed Status/Summary/Table/Details/Next-steps layout no
+// matter which workflow produced it. Returns null if the block isn't
+// present (e.g. an older session, or a run still mid-flight), in which
+// case the caller falls back to rendering the raw markdown as before.
+function parseResultBlock(text: string): ResultBlock | null {
+  const match = text.match(/===RESULT===([\s\S]*?)===END RESULT===/i)
+  if (!match) return null
+  const body = match[1]
+  const sectionLabels = ['TABLE', 'DETAILS', 'NEXT_STEPS']
+  const after = (label: string) => {
+    const stop = `(?:\\n(?:${sectionLabels.filter((l) => l !== label).join('|')}):|$)`
+    const re = new RegExp(`${label}:\\s*([\\s\\S]*?)${stop}`, 'i')
+    return body.match(re)?.[1]
+  }
+  const bullets = (s?: string) =>
+    (s ?? '')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith('-'))
+      .map((l) => l.replace(/^-\s*/, '').trim())
+      .filter(Boolean)
+  const statusMatch = body.match(/STATUS:\s*(success|partial|blocked)/i)
+  const summaryMatch = body.match(/SUMMARY:\s*([\s\S]*?)(?:\nTABLE:|\nDETAILS:|\nNEXT_STEPS:|$)/i)
+  return {
+    status: (statusMatch?.[1]?.toLowerCase() as ResultBlock['status']) ?? 'success',
+    summary: summaryMatch?.[1]?.trim() ?? '',
+    table: parseMarkdownTable(after('TABLE') ?? ''),
+    details: bullets(after('DETAILS')),
+    nextSteps: bullets(after('NEXT_STEPS')),
+    before: text.slice(0, match.index).trim(),
+  }
+}
+
+const RESULT_STATUS_META = {
+  success: { label: 'Success', icon: CheckCircle2 },
+  partial: { label: 'Partial', icon: AlertTriangle },
+  blocked: { label: 'Blocked', icon: XCircle },
+} as const
+
+function ResultTableView({ table }: { table: ResultTable }) {
+  return (
+    <div className="result-table-wrap">
+      <table className="result-table">
+        <thead>
+          <tr>
+            {table.headers.map((h, i) => (
+              <th key={i}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((row, i) => (
+            <tr key={i}>
+              {row.map((cell, j) => (
+                <td key={j}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// A single tool call's command + real output, collapsed by default (long
+// command output would otherwise dominate the log) -- click to expand.
+// This is what makes "the full log" a genuine claim: the actual stdout
+// opencode captured, not just a tool name and a status word.
+function ToolLogEntry({ part }: { part: Part }) {
+  const [open, setOpen] = useState(false)
+  const hasOutput = !!part.toolOutput?.trim()
+  return (
+    <div className="log-line log-tool-entry">
+      <button
+        className="log-tool-header"
+        onClick={() => hasOutput && setOpen((o) => !o)}
+        disabled={!hasOutput}
+      >
+        {hasOutput ? open ? <ChevronDown size={13} /> : <ChevronRight size={13} /> : <Terminal size={13} />}
+        <Terminal size={13} className="log-tool-icon" />
+        <code className="log-tool-command">{part.toolCommand || part.tool}</code>
+        <span className={`tool-status tool-status-${part.toolStatus ?? 'pending'}`}>{part.toolStatus}</span>
+      </button>
+      {open && hasOutput && <pre className="log-tool-output">{part.toolOutput}</pre>}
+    </div>
+  )
+}
+
+// A vibrant, cycling accent per stage number -- purely cosmetic, keeps a
+// long multi-phase run from looking like a wall of identical gray cards.
+const STAGE_COLORS = ['violet', 'teal', 'amber', 'pink', 'blue', 'green'] as const
+
+interface PhaseReport {
+  phase: number
+  source?: string
+  fields: { key: string; value: string }[]
+}
+
+// Both orchestrators (see their .opencode/agent/*.md files) print this
+// exact shape after every phase -- not the ===RESULT=== block (that's
+// reserved for the true end of a run), but a reliable, pre-existing
+// "PHASE N COMPLETE" / "Results from <skill>:" / indented "Key: Value"
+// report. Parsed from the raw text instead of asking the orchestrators to
+// change their own (already carefully-tuned) prompt format.
+function parsePhaseReports(text: string): PhaseReport[] {
+  const lines = text.split('\n')
+  const isDivider = (l: string) => /^[-─_=]{5,}$/.test(l.trim())
+  const reports: PhaseReport[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].trim().match(/^PHASE (\d+) COMPLETE$/i)
+    if (!m) continue
+    const phase = Number(m[1])
+    let j = i + 1
+    while (j < lines.length && (isDivider(lines[j]) || lines[j].trim() === '')) j++
+    let source: string | undefined
+    const sourceMatch = lines[j]?.trim().match(/^Results from (.+):$/i)
+    if (sourceMatch) {
+      source = sourceMatch[1]
+      j++
+    }
+    const fields: { key: string; value: string }[] = []
+    while (j < lines.length) {
+      const line = lines[j]
+      if (line.trim() === '' || isDivider(line)) break
+      const kv = line.match(/^\s{2,}([^:]+?):\s*(.*)$/)
+      if (!kv) break
+      fields.push({ key: kv[1].trim(), value: kv[2].trim() })
+      j++
+    }
+    reports.push({ phase, source, fields })
+  }
+  // Keep only the latest report per phase number (a retried/re-run phase
+  // would otherwise show twice).
+  const byPhase = new Map<number, PhaseReport>()
+  for (const r of reports) byPhase.set(r.phase, r)
+  return [...byPhase.values()].sort((a, b) => a.phase - b.phase)
+}
+
+interface FinalSummary {
+  title: string
+  phaseResults: { label: string; detail: string }[]
+  nextSteps: string[]
+  closingLine?: string
+}
+
+// The orchestrators' own closing banner (e.g. "STABLE2 RELEASE
+// ORCHESTRATION COMPLETE" / "STABLE2 META SYNC COMPLETE") -- same idea as
+// parsePhaseReports, but for the one banner at the very end of a full
+// multi-phase run, so it renders as a clean card instead of raw box-
+// drawing ASCII art.
+function parseFinalSummary(text: string): FinalSummary | null {
+  const lines = text.split('\n')
+  const titleIdx = lines.findIndex((l) => /COMPLETE/.test(l) && /[═║╔╚]/.test(l))
+  if (titleIdx === -1) return null
+  const title = lines[titleIdx].replace(/[═║╔╗╚╝]/g, '').trim()
+  const sectionLines = (label: string) => {
+    const start = lines.findIndex((l, i) => i > titleIdx && l.trim().toLowerCase() === `${label.toLowerCase()}:`)
+    if (start === -1) return [] as string[]
+    const out: string[] = []
+    for (let i = start + 1; i < lines.length; i++) {
+      if (lines[i].trim() === '') break
+      out.push(lines[i].trim())
+    }
+    return out
+  }
+  const phaseResults = sectionLines('Phase Results').map((l) => {
+    const m = l.match(/^(\d+\.\s*.+?)\s{2,}(.+)$/)
+    return m ? { label: m[1].trim(), detail: m[2].trim() } : { label: l, detail: '' }
+  })
+  const nextSteps = sectionLines('Next Steps')
+    .map((l) => l.replace(/^\d+\.\s*/, '').trim())
+    .filter(Boolean)
+  const closingLine = lines
+    .slice(titleIdx)
+    .map((l) => l.trim())
+    .find((l) => /finished successfully/i.test(l))
+  return { title, phaseResults, nextSteps, closingLine }
+}
+
+// Collects every box-drawn banner (╔═…╗ / ║ … ║ / ╚═…╝) in a message into
+// its plain-text inner lines, border characters stripped -- used both to
+// render the orchestrator's startup banner as a card and, generically, to
+// scrub leftover ASCII art out of any text we fall back to showing raw.
+function extractBoxBanners(text: string): { banners: string[][]; stripped: string } {
+  const lines = text.split('\n')
+  const banners: string[][] = []
+  const remove = new Array(lines.length).fill(false)
+  let i = 0
+  while (i < lines.length) {
+    if (!/^[╔╚]/.test(lines[i].trim())) {
+      i++
+      continue
+    }
+    const start = i
+    const content: string[] = []
+    let j = i + 1
+    while (j < lines.length && !/^[╔╚]/.test(lines[j].trim())) {
+      const inner = lines[j].trim().replace(/^║/, '').replace(/║$/, '').trim()
+      if (inner) content.push(inner)
+      j++
+    }
+    for (let k = start; k <= j; k++) remove[k] = true
+    if (content.length) banners.push(content)
+    i = j + 1
+  }
+  const stripped = lines
+    .filter((_, idx) => !remove[idx])
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return { banners, stripped }
+}
+
+interface IntroBanner {
+  title: string
+  subtitle: string | null
+  mode: string | null
+  phases: string[]
+  noticeTitle: string | null
+  noticeBody: string[]
+  body: string
+}
+
+// Every multi-phase orchestrator prints this once, before Phase 1 --
+// a title banner, a "Mode: DRY-RUN"/"Mode: LIVE" line, the numbered list
+// of phases it's about to run, and (in dry-run) a second notice banner.
+// Parsed so the UI can show it as a clean card instead of raw ASCII art.
+//
+// Some single-shot agents (e.g. on-demand-cherry-pick) print a similar
+// banner but with no phase list -- just their own plan content (which
+// repos/branches/commits are in scope) below it. `body` captures that
+// leftover content (minus the Mode line, the phase list, and any stray
+// fenced-code-block delimiter the agent wrapped the whole message in) so
+// it can still be shown instead of silently dropped.
+function parseIntroBanner(text: string): IntroBanner | null {
+  const { banners, stripped } = extractBoxBanners(text)
+  if (banners.length === 0) return null
+  const [title, ...subtitleLines] = banners[0]
+  if (!title) return null
+  const modeMatch = text.match(/^Mode:\s*(.+)$/im)
+  const phasesMatch = text.match(/execute \d+ phases?:?\s*\n([\s\S]*?)(?:\n\s*\n|$)/i)
+  const phases = phasesMatch
+    ? phasesMatch[1]
+        .split('\n')
+        .map((l) => l.trim().replace(/^\d+\.\s*/, ''))
+        .filter(Boolean)
+    : []
+  const notice = banners[1] ?? []
+  // The notice banner's first ALL-CAPS line is its heading (e.g. "DRY-RUN
+  // MODE ACTIVE"); everything after is body text/an example command.
+  const [noticeTitle, ...noticeBody] = notice
+  let body = stripped
+  if (modeMatch) body = body.replace(modeMatch[0], '')
+  if (phasesMatch) body = body.replace(phasesMatch[0], '')
+  body = body
+    .split('\n')
+    .filter((l) => l.trim() !== '```')
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return {
+    title,
+    subtitle: subtitleLines.join(' ').trim() || null,
+    mode: modeMatch?.[1]?.trim() ?? null,
+    phases,
+    noticeTitle: noticeTitle ?? null,
+    noticeBody,
+    body,
+  }
+}
+
+interface UpcomingPhase {
+  phase: number
+  title: string
+  checklist: string[]
+  prompt: string | null
+}
+
+// The "PHASE N: TITLE" divider + "This phase will: ✓ …" checklist that
+// every orchestrator prints right before pausing for its Y/n gate --
+// parsed into a title/checklist/prompt triple so the UI can show "what's
+// about to happen" as a card instead of a raw divider-and-bullets dump.
+function parseUpcomingPhase(text: string): UpcomingPhase | null {
+  const headerMatch = text.match(/^PHASE (\d+):\s*(.+)$/im)
+  if (!headerMatch) return null
+  const phase = Number(headerMatch[1])
+  const title = headerMatch[2].trim()
+  const afterHeader = text.slice((headerMatch.index ?? 0) + headerMatch[0].length)
+  const checklist: string[] = []
+  const checklistMatch = afterHeader.match(/this phase will:?\s*\n([\s\S]*?)(?:\n\s*\n|$)/i)
+  if (checklistMatch) {
+    for (const line of checklistMatch[1].split('\n')) {
+      const item = line.trim().replace(/^[✓✔x\-*]\s*/i, '')
+      if (item) checklist.push(item)
+    }
+  }
+  return { phase, title, checklist, prompt: extractTrailingPrompt(text) }
+}
+
+function IntroBannerCard({ banner }: { banner: IntroBanner }) {
+  return (
+    <div className="orchestrator-banner">
+      <div className="orchestrator-banner-title">{banner.title}</div>
+      {banner.subtitle && <p className="orchestrator-banner-subtitle">{banner.subtitle}</p>}
+      <div className="orchestrator-banner-meta">
+        {banner.mode && (
+          <span className={`mode-pill mode-pill-${banner.mode.toLowerCase().includes('dry') ? 'dry' : 'live'}`}>
+            {banner.mode}
+          </span>
+        )}
+        {banner.phases.length > 0 && <span className="orchestrator-banner-count">{banner.phases.length} phases</span>}
+      </div>
+      {banner.phases.length > 0 && (
+        <ol className="orchestrator-banner-phases">
+          {banner.phases.map((p, i) => (
+            <li key={i}>{p}</li>
+          ))}
+        </ol>
+      )}
+      {banner.noticeTitle && (
+        <div className="orchestrator-notice">
+          <div className="orchestrator-notice-title">
+            <AlertTriangle size={14} />
+            {banner.noticeTitle}
+          </div>
+          {banner.noticeBody.map((line, i) =>
+            /^--\S/.test(line) ? (
+              <code className="orchestrator-notice-code" key={i}>
+                {line}
+              </code>
+            ) : (
+              <p key={i}>{line}</p>
+            ),
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function UpcomingPhaseCard({ phase }: { phase: UpcomingPhase }) {
+  return (
+    <div className="upcoming-phase-card">
+      <div className="upcoming-phase-header">
+        <span className="stage-card-badge">{phase.phase}</span>
+        <span className="stage-card-title">Next: {phase.title}</span>
+      </div>
+      {phase.checklist.length > 0 && (
+        <ul className="upcoming-phase-checklist">
+          {phase.checklist.map((item, i) => (
+            <li key={i}>
+              <Check size={13} />
+              {item}
+            </li>
+          ))}
+        </ul>
+      )}
+      {phase.prompt && (
+        <div className="result-prompt">
+          <ShieldQuestion size={15} />
+          <span>{phase.prompt}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PhaseReportCard({ report, label, color }: { report: PhaseReport; label?: string; color: string }) {
+  return (
+    <div className={`stage-card stage-card-${color}`}>
+      <div className="stage-card-header">
+        <span className="stage-card-badge">{report.phase}</span>
+        <span className="stage-card-title">{label ?? report.source ?? `Phase ${report.phase}`}</span>
+        <span className="stage-card-status">
+          <Check size={11} /> Done
+        </span>
+      </div>
+      {report.fields.length > 0 && (
+        <div className="stage-card-fields">
+          {report.fields.map((f, i) => (
+            <div className="stage-card-field" key={i}>
+              <span className="stage-card-field-key">{f.key}</span>
+              <span className="stage-card-field-value">{f.value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FinalSummaryCard({ summary, compact = false }: { summary: FinalSummary; compact?: boolean }) {
+  return (
+    <div className={compact ? 'result-section orchestrator-recap' : 'result-structured'}>
+      {compact ? (
+        <h3>{summary.title}</h3>
+      ) : (
+        <div className="result-status result-status-success">
+          <CheckCircle2 size={15} />
+          {summary.title}
+        </div>
+      )}
+      {summary.phaseResults.length > 0 &&
+        (compact ? (
+          <div className="stage-card-fields">
+            {summary.phaseResults.map((p, i) => (
+              <div className="stage-card-field" key={i}>
+                <span className="stage-card-field-key">{p.label}</span>
+                <span className="stage-card-field-value">{p.detail}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="result-section">
+            <h3>Phase results</h3>
+            <div className="stage-card-fields">
+              {summary.phaseResults.map((p, i) => (
+                <div className="stage-card-field" key={i}>
+                  <span className="stage-card-field-key">{p.label}</span>
+                  <span className="stage-card-field-value">{p.detail}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      {!compact && summary.nextSteps.length > 0 && (
+        <div className="result-section">
+          <h3>Next steps</h3>
+          <ul>
+            {summary.nextSteps.map((s, i) => (
+              <li key={i}>{s}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {!compact && summary.closingLine && <p className="result-summary">{summary.closingLine}</p>}
+    </div>
+  )
 }
 
 function PhaseStepper({ labels, current, complete }: { labels: string[]; current: number; complete: boolean }) {
@@ -162,7 +711,15 @@ function partsFromHistory(messages: MessageEntry[]): { order: string[]; byId: Re
       } else if (part.type === 'text' || part.type === 'reasoning') {
         byId[id] = { id, kind: part.type, text: part.text ?? '' }
       } else if (part.type === 'tool') {
-        byId[id] = { id, kind: 'tool', tool: part.tool, toolStatus: part.state?.status, text: '' }
+        byId[id] = {
+          id,
+          kind: 'tool',
+          tool: part.tool,
+          toolStatus: part.state?.status,
+          toolCommand: part.state?.input?.command,
+          toolOutput: part.state?.output,
+          text: '',
+        }
       } else {
         continue
       }
@@ -281,10 +838,13 @@ export default function SessionView() {
             upsertPart(part.id as string, { kind: part.type as Part['kind'], text: (part.text as string) ?? '' })
           } else if (part.type === 'tool') {
             const state = (part.state as Record<string, unknown>) ?? {}
+            const input = (state.input as Record<string, unknown>) ?? {}
             upsertPart(part.id as string, {
               kind: 'tool',
               tool: part.tool as string,
               toolStatus: state.status as string,
+              toolCommand: input.command as string | undefined,
+              toolOutput: state.output as string | undefined,
               text: '',
             })
           }
@@ -491,6 +1051,47 @@ export default function SessionView() {
   // the result of every workflow looks the same shape to the user.
   const lastTextPartId = [...partOrder].reverse().find((id) => parts[id]?.kind === 'text')
   const finalText = lastTextPartId ? parts[lastTextPartId].text : ''
+  const resultBlock = finalText ? parseResultBlock(finalText) : null
+
+  // Phase/final-summary reports are spread across multiple separate
+  // assistant messages (the orchestrator pauses for a Y/n between each
+  // one) -- scan every text part, not just the last, to build the
+  // stage-by-stage breakdown as the run progresses.
+  const allAssistantText = partOrder
+    .map((id) => parts[id])
+    .filter((p): p is Part => !!p && p.kind === 'text' && !p.text.startsWith('> '))
+    .map((p) => p.text)
+    .join('\n\n')
+  const phaseReports = allAssistantText ? parsePhaseReports(allAssistantText) : []
+  // The orchestrator's own closing banner can appear either as the whole
+  // finalText (no ===RESULT=== block yet) or tucked inside resultBlock's
+  // "before" text (once AGENTS.md's block has been appended after it) --
+  // check both so the stage-by-stage recap still renders either way.
+  const finalSummary = parseFinalSummary(resultBlock ? resultBlock.before : finalText)
+  // Anything left in resultBlock.before once the mechanical phase/banner
+  // text is stripped out is genuine plain-language prose the agent wrote
+  // (e.g. a one-line intro) -- safe to show as-is, unlike the raw blocks.
+  const cleanedBefore = resultBlock ? stripReportingNoise(resultBlock.before) : ''
+  // The orchestrator's one-time startup banner (title/mode/phase list) and
+  // its per-phase "PHASE N: TITLE" + checklist + Y/n gate are both plain
+  // ASCII art in the raw transcript -- parse them into cards instead of
+  // ever showing that raw text in the Output panel.
+  const introBanner = !resultBlock && !finalSummary ? parseIntroBanner(finalText) : null
+  const upcomingPhase = !resultBlock && !finalSummary ? parseUpcomingPhase(finalText) : null
+  // Mid-run, with no result/summary yet, the last message is usually just
+  // a "PHASE N COMPLETE" report (already shown as a stage card above)
+  // optionally followed by a Y/n confirmation -- surface only that
+  // trailing question, not the whole message, so nothing looks duplicated.
+  // Skipped when upcomingPhase already captured the same prompt.
+  const pendingPrompt = !resultBlock && !finalSummary && !upcomingPhase ? extractTrailingPrompt(finalText) : null
+  // introBanner.body already holds the plan's real content (e.g.
+  // on-demand-cherry-pick's repo/branch/commit table) -- strip the
+  // trailing Y/n question back off it when present, since pendingPrompt
+  // already renders that separately as its own actionable prompt.
+  const introBannerBody =
+    introBanner && pendingPrompt && introBanner.body.endsWith(pendingPrompt)
+      ? introBanner.body.slice(0, introBanner.body.length - pendingPrompt.length).trim()
+      : (introBanner?.body ?? '')
 
   const phaseLabels = workflow ? PHASE_LABELS[workflow.id] : undefined
   const completedPhases = phaseLabels ? countCompletedPhases(partOrder, parts) : 0
@@ -538,6 +1139,19 @@ export default function SessionView() {
 
       {phaseLabels && hasStarted && (
         <PhaseStepper labels={phaseLabels} current={currentPhase} complete={isComplete} />
+      )}
+
+      {phaseReports.length > 0 && (
+        <div className="stage-results">
+          {phaseReports.map((report) => (
+            <PhaseReportCard
+              key={report.phase}
+              report={report}
+              label={phaseLabels?.[report.phase - 1]}
+              color={STAGE_COLORS[(report.phase - 1) % STAGE_COLORS.length]}
+            />
+          ))}
+        </div>
       )}
 
       {sessionLoadError && (
@@ -594,17 +1208,91 @@ export default function SessionView() {
           <h2>Output</h2>
           {finalText && <CopyButton value={finalText} label="Copy" />}
         </div>
-        <div className="result-text">
-          {finalText ? (
-            <ReactMarkdown>{finalText}</ReactMarkdown>
-          ) : busy ? (
-            <span className="typing-indicator">
-              Working <span /> <span /> <span />
-            </span>
-          ) : (
-            'Waiting for output…'
-          )}
-        </div>
+        {resultBlock ? (
+          <div className="result-structured">
+            {cleanedBefore && (
+              <div className="result-text result-text-before">
+                <ReactMarkdown>{cleanedBefore}</ReactMarkdown>
+              </div>
+            )}
+            {(() => {
+              const meta = RESULT_STATUS_META[resultBlock.status]
+              const StatusIcon = meta.icon
+              return (
+                <div className={`result-status result-status-${resultBlock.status}`}>
+                  <StatusIcon size={15} />
+                  {meta.label}
+                </div>
+              )
+            })()}
+            {finalSummary && <FinalSummaryCard summary={finalSummary} compact />}
+            {resultBlock.summary && (
+              <div className="result-section">
+                <h3>Summary</h3>
+                <p className="result-summary">{resultBlock.summary}</p>
+              </div>
+            )}
+            {resultBlock.table && (
+              <div className="result-section">
+                <h3>Breakdown</h3>
+                <ResultTableView table={resultBlock.table} />
+              </div>
+            )}
+            {resultBlock.details.length > 0 && (
+              <div className="result-section">
+                <h3>Details</h3>
+                <ul>
+                  {resultBlock.details.map((d, i) => (
+                    <li key={i}>{d}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {resultBlock.nextSteps.length > 0 && (
+              <div className="result-section">
+                <h3>Next steps</h3>
+                <ul>
+                  {resultBlock.nextSteps.map((s, i) => (
+                    <li key={i}>{s}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        ) : finalSummary ? (
+          <FinalSummaryCard summary={finalSummary} />
+        ) : introBanner || upcomingPhase || phaseReports.length > 0 || pendingPrompt ? (
+          <div className="result-pending">
+            {introBanner && <IntroBannerCard banner={introBanner} />}
+            {introBannerBody && (
+              <div className="result-text">
+                <ReactMarkdown>{introBannerBody}</ReactMarkdown>
+              </div>
+            )}
+            {upcomingPhase ? (
+              <UpcomingPhaseCard phase={upcomingPhase} />
+            ) : pendingPrompt ? (
+              <div className="result-prompt">
+                <ShieldQuestion size={15} />
+                <span>{pendingPrompt}</span>
+              </div>
+            ) : phaseReports.length > 0 ? (
+              <p className="result-muted">Phase complete — see the summary above. Waiting for the next phase to start…</p>
+            ) : null}
+          </div>
+        ) : (
+          <div className="result-text">
+            {finalText ? (
+              <ReactMarkdown>{extractBoxBanners(finalText).stripped}</ReactMarkdown>
+            ) : busy ? (
+              <span className="typing-indicator">
+                Working <span /> <span /> <span />
+              </span>
+            ) : (
+              'Waiting for output…'
+            )}
+          </div>
+        )}
       </div>
 
       {isComplete && (
@@ -642,11 +1330,7 @@ export default function SessionView() {
             const part = parts[id]
             if (!part) return null
             if (part.kind === 'tool') {
-              return (
-                <div className="log-line log-tool" key={id}>
-                  (tool: {part.tool} — {part.toolStatus})
-                </div>
-              )
+              return <ToolLogEntry key={id} part={part} />
             }
             if (part.kind === 'reasoning') {
               return (
@@ -664,14 +1348,16 @@ export default function SessionView() {
         </div>
       </details>
 
-      <div className="quick-replies">
-        <button className="btn-secondary" onClick={() => sendReply('Y')}>
-          Yes
-        </button>
-        <button className="btn-secondary" onClick={() => sendReply('n')}>
-          No
-        </button>
-      </div>
+      {!isComplete && (
+        <div className="quick-replies">
+          <button className="btn-secondary" onClick={() => sendReply('Y')}>
+            Yes
+          </button>
+          <button className="btn-secondary" onClick={() => sendReply('n')}>
+            No
+          </button>
+        </div>
+      )}
       <form
         className="reply-form"
         onSubmit={(e) => {

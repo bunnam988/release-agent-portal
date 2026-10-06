@@ -1,9 +1,9 @@
 ---
 name: on-demand-cherry-pick
-description: "On-demand cherry-pick for one or more Jira tickets to any target branch. Finds merged GitHub PRs to develop for all given tickets, cherry-picks them (batched per repo) to a user-supplied GitHub branch, computes a hotfix tag per repo from that repo's own latest stable2 tag, updates SRCREV/PKGREV in meta-rdk-broadband for a user-supplied Gerrit branch, and cherry-picks/squashes any Jira-linked Gerrit changes for all tickets to that same Gerrit branch — everything tagged/pushed once per repo, all under one shared Gerrit topic. Fully independent of the stable2 pipeline: uses its own workspace and its own artifact files, never the shared ones. Supports --dry-run and --test-repo."
+description: "On-demand cherry-pick for one or more Jira tickets to any target branch. Finds merged GitHub PRs to develop for all given tickets, cherry-picks them (batched per repo) to a GitHub branch resolved automatically per repo from the user-supplied Gerrit branch (via that repo's tag in meta-rdk-broadband's pkgrev.inc), computes a hotfix tag per repo from that repo's own latest stable2 tag, updates SRCREV/PKGREV in meta-rdk-broadband for the same Gerrit branch, and cherry-picks/squashes any Jira-linked Gerrit changes for all tickets to that same Gerrit branch — everything tagged/pushed once per repo, all under one shared Gerrit topic. Fully independent of the stable2 pipeline: uses its own workspace and its own artifact files, never the shared ones. Supports --dry-run and --test-repo."
 mode: primary
 license: Comcast
-argument-hint: "Required: '--tickets <KEY[,KEY...]>' one or more Jira tickets (comma-separated), '--github-branch <name>' target GitHub branch, '--gerrit-branch <name>' target Gerrit branch, '--topic <name>' shared Gerrit topic. Tag names are computed per repo during the run and confirmed/overridden interactively — not provided upfront. Optional: '--dry-run', '--test-repo', '--gerrit-host <host>', '--gerrit-repo <path>' to override the matching config.yaml values for this run only."
+argument-hint: "Required: '--tickets <KEY[,KEY...]>' one or more Jira tickets (comma-separated), '--gerrit-branch <name>' target Gerrit branch, '--topic <name>' shared Gerrit topic. GitHub branch is NOT a user input — it's resolved automatically per repo from the Gerrit branch (see 'Resolve GitHub Branch' below). Tag names are computed per repo during the run and confirmed/overridden interactively — not provided upfront. Optional: '--dry-run', '--test-repo', '--gerrit-host <host>', '--gerrit-repo <path>' to override the matching config.yaml values for this run only."
 metadata:
   author: release-agent
   source: local
@@ -21,21 +21,26 @@ tagged, and pushed once:
 1. Find every GitHub PR merged to `develop` for **each** given ticket
    (reuses `jira-pr-lookup`'s discovery logic per ticket, merges results
    by repo, never writes its shared `pr_list.yaml` — see Isolation below)
-2. Cherry-pick all of those commits, batched per repo, to a **GitHub
-   branch the user names**
-3. For each repo that got new commits, **compute** a hotfix tag from that
+2. For each repo in that merged list, **resolve its GitHub branch
+   automatically** from the **Gerrit branch the user names** — find that
+   repo's current tag in meta-rdk-broadband's `pkgrev.inc` on that Gerrit
+   branch, then find which GitHub branch currently points at that tag
+   (see Resolve GitHub Branch below). The user never provides a GitHub
+   branch directly.
+3. Cherry-pick all of those commits, batched per repo, to each repo's own
+   resolved GitHub branch
+4. For each repo that got new commits, **compute** a hotfix tag from that
    repo's own latest stable2 tag (see Tag Naming below) — confirmed or
    overridden by the user per repo, never assumed
-4. Resolve each repo's new tag's SHA, update `generic-srcrev.inc` /
-   `generic-pkgrev.inc` in a **dedicated, isolated** local
-   `meta-rdk-broadband` clone on a **Gerrit branch the user names** (can
-   differ from the GitHub branch), and push that one combined change to
-   Gerrit directly
-5. Find any Jira-linked Gerrit changes for **all** given tickets (reuses
+5. Resolve each repo's new tag's SHA, update `generic-srcrev.inc` /
+   `generic-pkgrev.inc` in the **same dedicated, isolated** local
+   `meta-rdk-broadband` clone used in step 2, on that **same Gerrit
+   branch**, and push that one combined change to Gerrit directly
+6. Find any Jira-linked Gerrit changes for **all** given tickets (reuses
    `gerrit-cherrypick-squash`'s dependency traversal + `rdkjenkins03`
    MERGED-comment scan, invoked completely unmodified — it already
    accepts multiple ticket keys) and cherry-pick/squash them onto that
-   same Gerrit branch, under the **same shared topic** as the Phase 4 push
+   same Gerrit branch, under the **same shared topic** as the Phase 5 push
 
 ## Tag Naming — compute, never assume
 
@@ -49,10 +54,10 @@ Real examples of what exists on these branches today:
 For **each repo** that received new commits in Phase 2, compute its tag
 like this:
 
-1. Find the latest tag reachable from `{github_branch}` that matches
+1. Find the latest tag reachable from `{repo_github_branch}` that matches
    **specifically** the stable2 naming pattern:
    ```bash
-   git tag --merged origin/{github_branch} --sort=-creatordate \
+   git tag --merged origin/{repo_github_branch} --sort=-creatordate \
      | grep -E '^[0-9]+\.[0-9]+\.[0-9]+_stable2_[0-9]{8}(_hotfix_v[0-9]+)?$' \
      | head -1
    ```
@@ -63,7 +68,7 @@ like this:
    back to any other tag. Stop for this repo specifically and ask the
    user directly:
    ```
-   No stable2-pattern tag found on {github_branch} for {repo}.
+   No stable2-pattern tag found on {repo_github_branch} for {repo}.
    What tag would you like to use for this repo?
    ```
    Use whatever they type, verbatim, as this repo's tag (skip the
@@ -108,7 +113,10 @@ touch state the stable2 biweekly pipeline depends on:
   `on_demand_cherry_pick_{tickets_joined_by_underscore}.yaml` — a name
   that cannot collide with anything the stable2 pipeline reads.
 - **Never use `.stable2-meta-sync/meta-rdk-broadband`.** Use a **separate
-  clone** at `.on-demand-cherry-pick/meta-rdk-broadband` instead.
+  clone** at `.on-demand-cherry-pick/meta-rdk-broadband` instead. Likewise,
+  any per-repo clone needed to resolve a GitHub branch (see Resolve GitHub
+  Branch step c) lives at `.on-demand-cherry-pick/{repo}` — never reuse or
+  create clones anywhere the stable2 pipeline looks.
 - **Never touch `stable2_status_analysis.yaml`, `stable2_release_tags.yaml`,
   `stable2_srcrev_updates.yaml`, `track_for_stable2_state.yaml`, or any
   other stable2 session-state file.**
@@ -124,20 +132,212 @@ touch state the stable2 biweekly pipeline depends on:
   already-authenticated `gh` CLI, Jira lookups still go through
   `scripts/jira_rest.py` (credentials from `ccp_jira.env`, not MCP).
 
+## Resolve GitHub Branch (per repo, from the Gerrit branch)
+
+The user never names a GitHub branch directly — it's derived, once per
+repo, from the same `{gerrit_branch}` they already gave for the meta-layer
+change. This runs once, for every repo in Phase 1's merged commit list,
+before the cherry-pick plan is printed (see "Before Starting" step 4).
+
+1. **Prepare the isolated meta-rdk-broadband clone now** (the same clone
+   Phase 4 reuses later — see Isolation above for why it's dedicated):
+   ```bash
+   git clone https://{gerrit_host}/{gerrit_repo} .on-demand-cherry-pick/meta-rdk-broadband  # only if missing
+   cd .on-demand-cherry-pick/meta-rdk-broadband
+   git fetch origin
+   git checkout {gerrit_branch} 2>/dev/null || git checkout -b {gerrit_branch} origin/{gerrit_branch}
+   git pull --ff-only origin {gerrit_branch} 2>/dev/null || true
+   ```
+   If `{gerrit_branch}` doesn't exist on Gerrit at all, stop here and tell
+   the user — there is nothing to resolve a branch from.
+
+2. **For each repo** in the Phase 1 merged commit list (`{owner_repo}`,
+   e.g. `rdkcentral/utopia`):
+
+   > **Rule for this whole loop:** there is no predefined expectation for
+   > what a `{pkgrev_file}` tag value looks like. `1.0.0`, a placeholder
+   > version, a stable2 tag, a hotfix tag, anything — all of them get
+   > resolved the exact same automatic way via steps b–c, in one
+   > uninterrupted pass with no stop-and-ask in between. "Doesn't match a
+   > pattern" and "no tip match" are never grounds by themselves to ask
+   > the user for a branch; only a truly missing entry (step a) or a
+   > truly unreachable commit (step c.6) is.
+
+   a. **Find that repo's current tag** in `{pkgrev_file}`
+      (`conf/include/generic-pkgrev.inc`), on the `{gerrit_branch}` checked
+      out above. Read the file and find the entry for this repo's
+      component (same component-name convention as `generic-srcrev.inc` —
+      see `specs/srcrev-parsing.md`; a repo can map to more than one
+      component, in which case any one of its components' entries is
+      sufficient since they're kept in lockstep). Extract whatever string
+      is assigned there (e.g. `PV_pn-ccsp-xdns = "1.0.0"` → the value is
+      `1.0.0`) and treat it **as-is, with zero expectations about its
+      shape**. There is no predefined pattern it needs to satisfy — not
+      stable2, not hotfix, not even semver. Plain semver (`1.0.0`),
+      placeholder versions, stable2 (`2.0.0_stable2_20260306`), hotfix
+      (`..._hotfix_v3`), or any other custom suffix (`..._v5`) are all
+      **equally valid** input to step b below, handled by the exact same
+      automatic GitHub lookup — none of them is special-cased, and none
+      of them is a reason to stop and ask. The stable2/hotfix pattern from
+      Tag Naming above is irrelevant here; it only matters later, in
+      Phase 3, for computing this run's *new* tag.
+
+      **The only time this step asks the user is when the component has
+      no entry at all** in `{pkgrev_file}` — i.e. there is no line to
+      read a value from, not "the value doesn't look like a release tag":
+      ```
+      Couldn't find {repo}'s component in {pkgrev_file} on Gerrit branch {gerrit_branch}.
+      Enter the GitHub branch to use for {repo}:
+      ```
+      Use whatever they type, verbatim, as this repo's GitHub branch, and
+      skip the rest of this step for that repo. If an entry **does**
+      exist, no matter what its value looks like, do not ask — go to
+      step b with that value.
+
+   b. **Resolve that tag to a commit SHA** on the real GitHub repo:
+      ```bash
+      git ls-remote --tags https://github.com/{github_org}/{repo}.git "refs/tags/{tag}" "refs/tags/{tag}^{}"
+      ```
+      Prefer the dereferenced (`^{}`) SHA if present (annotated tag);
+      otherwise use the plain tag SHA.
+
+      **If the tag doesn't exist on GitHub at all** (empty result — the
+      value in `{pkgrev_file}` doesn't correspond to any real tag), stop
+      for this repo specifically and ask:
+      ```
+      Tag {tag} (from {pkgrev_file}) doesn't exist on GitHub for {repo}.
+      Enter the GitHub branch to use for {repo}:
+      ```
+
+   c. **Resolve the branch — one uninterrupted automatic pass, no
+      stopping partway through.** Steps 1–9 below all run in the same
+      turn, with no question asked to the user until step 8 (and even
+      then only in the genuine dead-end case). In particular: a "no tip
+      match" result in step 2 is **not** itself a stopping point and
+      **never** produces a message to the user by itself — it just means
+      move on to step 3 immediately, in the same response.
+
+      1. **Check for a tip match first:**
+         ```bash
+         git ls-remote --heads https://github.com/{github_org}/{repo}.git
+         ```
+         Match the SHA from step b against this list.
+         - **Exactly one match:** the tag is already at the tip — that
+           branch is `{existing_github_branch}`. Continue to step 7 to
+           compute `{repo_github_branch}` from it; a tip match is never
+           reused directly as `{repo_github_branch}` itself — this run
+           still gets its own dedicated branch, named per step 7's
+           convention, same as every other case.
+         - **More than one match:** prefer whichever matching branch name
+           equals `support_branch` from `config/config.yaml` if it's
+           among them as `{existing_github_branch}`; otherwise list the
+           matches and ask the user which one to treat as
+           `{existing_github_branch}`. Either way, continue to step 7
+           next — never skip straight to step 9.
+         - **No match:** do not ask anything yet. Continue immediately to
+           step 2 below — the tag has simply moved past every branch
+           tip, which is the common case for older/placeholder tags like
+           `1.0.0`, and is resolved automatically the same way regardless
+           of whether the tag looks like a stable2 tag or not.
+      2. **(Only reached when step 1 found no tip match.)** Use GitHub's
+         own compare API to check containment directly — **no local
+         clone needed for this check**, just the already-authenticated
+         `gh` CLI, so there's no excuse to skip it or substitute a
+         question to the user instead:
+         ```bash
+         gh api repos/{github_org}/{repo}/compare/{branch}...{sha} --jq .status
+         ```
+         Run this once per branch name returned by step 1's
+         `ls-remote --heads` (yes, including `develop`/the default
+         branch — see below). Read `.status` from the response:
+         - `identical` or `behind` → the tag commit **is** reachable from
+           `{branch}` (i.e. `{branch}` is a descendant of the tag, or
+           equal to it) → `{branch}` is a candidate for
+           `{existing_github_branch}`.
+         - `ahead` or `diverged` → the tag commit is **not** reachable
+           from `{branch}` → not a candidate, move to the next branch.
+         Collect every branch that comes back `identical`/`behind` into
+         one candidate list before moving to step 4.
+      3. **`develop` (or whatever the repo's default branch is) is a
+         perfectly normal result here** — there is no special-casing that
+         excludes it from being `{existing_github_branch}`; the only
+         place it's treated differently is the naming step below, since a
+         non-`support/*` base shouldn't leak its own name into the new
+         branch.
+      4. **Exactly one candidate branch:** that's `{existing_github_branch}`
+         — including `develop` itself if that's the only candidate.
+         Continue to step 7, still without asking anything.
+      5. **More than one candidate branch:** prefer whichever equals
+         `support_branch` from `config/config.yaml` if it's among them;
+         otherwise list the candidates and ask the user which one to
+         treat as `{existing_github_branch}` — this is picking from a
+         real list of candidates, not inventing a branch name. Either
+         way, continue to step 7 next.
+      6. **None found:** before concluding this is a true orphan tag,
+         confirm step 2 actually ran against **every** branch from step
+         1's `ls-remote --heads` output (not a subset) — a partial scan
+         is the most common reason a containing branch (including
+         `develop`) gets missed. If a scripting/tooling error prevented
+         `gh api compare` from running for some branches, fix that and
+         retry step 2 before giving up. Only if every branch was actually
+         checked and all came back `ahead`/`diverged` is this a real dead
+         end — only **here**, after steps 1–6 have all been exhausted,
+         stop for this repo specifically and ask:
+         ```
+         Tag {tag} for {repo} isn't reachable from any GitHub branch.
+         Enter the GitHub branch to use for {repo}:
+         ```
+      7. Compute the new branch name — the naming convention depends on
+         whether `{existing_github_branch}` already follows the
+         `support/*` convention:
+         - **If `{existing_github_branch}` starts with `support/`:**
+           `{repo_github_branch} = "{existing_github_branch}_{gerrit_branch}"`
+           (e.g. `support/2026q2` + `8.5_p1b` → `support/2026q2_8.5_p1b`).
+         - **If `{existing_github_branch}` does NOT start with `support/`**
+           (e.g. `develop`, `master`, or any other non-support branch):
+           `{repo_github_branch} = "support/{gerrit_branch}"` instead —
+           do **not** prefix with the non-support branch name
+           (e.g. `develop` + `8.5_p1b` → `support/8.5_p1b`, not
+           `develop_8.5_p1b`).
+      8. **If `{repo_github_branch}` already exists on GitHub** (e.g. a
+         prior on-demand run already created it for this same Gerrit
+         branch), reuse it as-is — do not recreate or move it.
+      9. **Otherwise, create it from the tag's commit and push it**,
+         with no local checkout needed:
+         ```bash
+         git push https://github.com/{github_org}/{repo}.git {sha}:refs/heads/{repo_github_branch}
+         ```
+         Then report it: `{repo}: tag {tag} → based on {existing_github_branch}, new branch {repo_github_branch} created from {sha}`.
+
+3. Carry the resolved (or user-provided) `{repo_github_branch}` per repo
+   forward into the plan ("Before Starting" step 4) and into Phases 2–3
+   below — it replaces the single shared `{github_branch}` entirely; every
+   repo can end up on a different actual branch even though they all came
+   from the same `{gerrit_branch}`.
+
 ## Critical Constraints — Read First
 
-- **Four required inputs**: one or more Jira tickets (comma-separated),
-  GitHub branch, Gerrit branch, Gerrit topic. Tag names are NOT a required
-  input — they are computed per repo during the run (see Tag Naming) and
-  confirmed interactively. If any of the four are missing from the
-  invocation, ask for them before doing anything else.
+- **Three required inputs**: one or more Jira tickets (comma-separated),
+  Gerrit branch, Gerrit topic. GitHub branch is NOT a user input — it's
+  resolved automatically per repo (see Resolve GitHub Branch above). Tag
+  names are also NOT a required input — they are computed per repo during
+  the run (see Tag Naming) and confirmed interactively. If any of the
+  three are missing from the invocation, ask for them before doing
+  anything else.
 - **Batch by repo, not by ticket.** If two tickets both touch
   `rdkcentral/utopia`, cherry-pick both tickets' commits to `utopia` in
   one pass, create exactly one new tag for `utopia`, do exactly one
   SRCREV/PKGREV update for `utopia` — never process the same repo twice
   because it appeared under two tickets.
-- **GitHub branch and Gerrit branch are independent.** Never assume they
-  are the same value even if the user's naming looks similar.
+- **GitHub branch is resolved per repo, not shared.** Unlike the single
+  `{gerrit_branch}`, two different repos touched by the same run can
+  legitimately resolve to two different GitHub branches — never assume
+  they match each other or the Gerrit branch name.
+- **No tag value in `{pkgrev_file}` is ever rejected for its format.**
+  Plain semver, placeholder versions like `1.0.0`, stable2, hotfix, or
+  anything else are all equally valid input to the automatic GitHub
+  lookup in Resolve GitHub Branch — never stop and ask the user just
+  because a tag "doesn't look like" a release tag.
 - **One confirmation gate for the overall cherry-pick plan, plus one
   confirmation per repo for its computed tag.** The overall plan
   (which repos/PRs are in scope, across all tickets) needs exactly one
@@ -172,18 +372,17 @@ touch state the stable2 biweekly pipeline depends on:
    instead for this run only. Print the resolved values before proceeding.
    Do **not** read or use `meta_sync_workspace` — this workflow uses its
    own fixed workspace path (see Isolation above).
-2. **Parse arguments.** Expect `--tickets`, `--github-branch`,
-   `--gerrit-branch`, `--topic`, plus optional `--dry-run` / `--test-repo`.
-   `--tickets` may be a single key or a comma-separated list. For any of
-   the four required values missing from the invocation, ask for it
-   directly, one at a time:
+2. **Parse arguments.** Expect `--tickets`, `--gerrit-branch`, `--topic`,
+   plus optional `--dry-run` / `--test-repo`. `--tickets` may be a single
+   key or a comma-separated list. For any of the three required values
+   missing from the invocation, ask for it directly, one at a time:
    ```
    Enter one or more Jira ticket keys (comma-separated if more than one):
-   Enter the target GitHub branch to cherry-pick to:
-   Enter the target Gerrit branch (can differ from the GitHub branch):
+   Enter the target Gerrit branch (GitHub branch is resolved automatically from this):
    Enter the Gerrit topic to use for this change set:
    ```
-   Empty input is not allowed for any of these — keep asking.
+   Empty input is not allowed for any of these — keep asking. Do **not**
+   ask for a GitHub branch — see Resolve GitHub Branch above.
 3. **Run discovery for the plan** (read-only, no confirmation needed yet):
    - For **each** ticket, run `jira-pr-lookup`'s traversal, then merge the
      resulting PR/commit lists by repo, deduplicating by commit SHA (the
@@ -191,7 +390,9 @@ touch state the stable2 biweekly pipeline depends on:
    - Run `gerrit-cherrypick-squash`'s discovery (dependency traversal +
      `rdkjenkins03` MERGED-comment scan + Gerrit verify) across **all**
      given tickets at once — it already supports multiple ticket keys
-4. **Print ONE combined plan covering the cherry-pick scope, then ask
+4. **Resolve each repo's GitHub branch** per the Resolve GitHub Branch
+   section above, using the merged repo list from step 3.
+5. **Print ONE combined plan covering the cherry-pick scope, then ask
    once** (tag names are NOT decided yet — that happens per repo in Phase
    3):
 
@@ -203,15 +404,14 @@ touch state the stable2 biweekly pipeline depends on:
 ╚═════════════════════════════════════════════════════════════════╝
 
 Tickets:         {ticket1}, {ticket2}, ...
-GitHub branch:   {github_branch}
 Gerrit branch:   {gerrit_branch}
 Gerrit topic:    {topic}
 Mode:            {DRY-RUN / TEST-REPO / PRODUCTION}
 
 ─────────────────────────────────────────────────────────────────
-GITHUB CHERRY-PICK → {github_branch}  (batched per repo across all tickets)
-   rdkcentral/utopia         2 commit(s): PR#101 [{ticket1}], PR#102 [{ticket2}]
-   rdkcentral/ccsp-wifi      1 commit(s): PR#123 [{ticket1}]
+GITHUB CHERRY-PICK (GitHub branch resolved per repo from {gerrit_branch}'s pkgrev.inc)
+   rdkcentral/utopia    → branch {repo_github_branch} (tag {repo_tag})   2 commit(s): PR#101 [{ticket1}], PR#102 [{ticket2}]
+   rdkcentral/ccsp-wifi → branch {repo_github_branch} (tag {repo_tag})   1 commit(s): PR#123 [{ticket1}]
 
 GERRIT — {tickets joined}'s linked Gerrit changes → {gerrit_branch}
    {project}: change {NNNNN}
@@ -237,32 +437,35 @@ inline during Phase 3.
 ## PHASE 1: Find GitHub PRs (discovery — already run above)
 
 Reuse the merged, deduplicated, per-repo commit list gathered in "Before
-Starting" step 3. Do not re-run it. If it produced zero PRs across all
-tickets, note that clearly and skip Phases 2–3 for the GitHub side,
-proceeding straight to Phase 4/5 for the Gerrit side only (tickets can be
+Starting" step 3, and the per-repo resolved GitHub branches from step 4.
+Do not re-run either. If discovery produced zero PRs across all tickets,
+note that clearly and skip Phases 2–3 for the GitHub side, proceeding
+straight to Phase 4/5 for the Gerrit side only (tickets can be
 Gerrit-only).
 
 Per the Isolation section above: never let this step write `pr_list.yaml`.
 
 ---
 
-## PHASE 2: GitHub Cherry-Pick to `{github_branch}`
+## PHASE 2: GitHub Cherry-Pick (per repo, to its own resolved branch)
 
 **Script:** `scripts/cherry_pick_to_stable2.py` (generic despite the name —
 it takes an explicit `--branch`, it is not stable2-specific)
 
-For each repo in the merged commit list:
+For each repo in the merged commit list, using **that repo's own
+`{repo_github_branch}`** resolved in "Resolve GitHub Branch" above:
 ```bash
 python3 scripts/cherry_pick_to_stable2.py \
   --repo {owner_repo} \
   --commits {sha1,sha2,...} \
-  --branch {github_branch} \
+  --branch {repo_github_branch} \
   {dry_run_flag}
 ```
 
 This bypasses `pr_list.yaml`/`stable2_status_analysis.yaml` READY-gating
 entirely (manual `--repo`/`--commits` mode). It already handles cloning,
-creating/checking out `{github_branch}`, cherry-picking with `-x`,
+checking out `{repo_github_branch}` (never creating it — it must already
+exist, since it was resolved from a live tag), cherry-picking with `-x`,
 conflict auto-resolution, and pushing.
 
 Print the script's own final report. Only repos with at least one
@@ -281,9 +484,10 @@ If zero repos succeeded, skip Phases 3–4 and go straight to Phase 5
 ## PHASE 3: Compute Tag + GitHub Release (per repo)
 
 For each repo that succeeded in Phase 2, follow **Tag Naming** above in
-full: detect the latest stable2-pattern tag (or stop and ask if none
-exists for that repo), compute the hotfix tag, confirm it with the user
-(or take their override) — one repo at a time.
+full: detect the latest stable2-pattern tag reachable from **that repo's
+own `{repo_github_branch}`** (or stop and ask if none exists for that
+repo), compute the hotfix tag, confirm it with the user (or take their
+override) — one repo at a time.
 
 Once the final tag is confirmed for a repo, create the release with the changelog
 spanning from `{base_tag}` (extracted in Tag Naming step 6 above) to the new tag —
@@ -292,7 +496,7 @@ let `--generate-notes` fall back to its own default (previous tag):
 ```bash
 gh release create {final_tag} \
   --repo {owner_repo} \
-  --target {github_branch} \
+  --target {repo_github_branch} \
   --title {final_tag} \
   --generate-notes \
   --notes-start-tag {base_tag}
@@ -326,24 +530,11 @@ python3 .agents/skills/stable2-srcrev-updater/scripts/resolve_srcrev.py \
 If a repo is not in the script's built-in SRCREV mapping (see
 `specs/srcrev-parsing.md`), report it and skip that repo's `.inc` update.
 
-### 4.2 — Prepare the ISOLATED meta-rdk-broadband workspace
+### 4.2 — Reuse the ISOLATED meta-rdk-broadband workspace
 
-Use `.on-demand-cherry-pick/meta-rdk-broadband` — **not**
-`.stable2-meta-sync/meta-rdk-broadband`. Create the parent directory if
-needed.
-
-If the clone does not exist:
-```bash
-git clone https://{gerrit_host}/{gerrit_repo} .on-demand-cherry-pick/meta-rdk-broadband
-cd .on-demand-cherry-pick/meta-rdk-broadband
-git fetch origin
-git checkout {gerrit_branch} 2>/dev/null || git checkout -b {gerrit_branch} origin/{gerrit_branch} 2>/dev/null
-```
-If `{gerrit_branch}` does not exist yet on Gerrit, create it via the
-Gerrit REST API (same approach as `gerrit-cherrypick-squash` step 5a) from
-the clone's current HEAD, then check it out.
-
-If the clone already exists (from a previous on-demand run):
+Already cloned and checked out to `{gerrit_branch}` during "Resolve GitHub
+Branch" above, at `.on-demand-cherry-pick/meta-rdk-broadband` (**not**
+`.stable2-meta-sync/meta-rdk-broadband`). Just refresh it before editing:
 ```bash
 cd .on-demand-cherry-pick/meta-rdk-broadband
 git fetch origin
@@ -438,8 +629,8 @@ Tickets:         {ticket1}, {ticket2}, ...
 Mode:            {DRY-RUN / TEST-REPO / PRODUCTION}
 
 Phase Results:
-  1. Find PRs           ✓ {M} PRs across {N} repos, batched by repo (no shared files written)
-  2. GitHub cherry-pick  ✓ {S} repos succeeded, {F} need manual fix
+  1. Find PRs            ✓ {M} PRs across {N} repos, batched by repo (no shared files written)
+  2. GitHub cherry-pick  ✓ {S} repos succeeded, {F} need manual fix (branch resolved per repo from {gerrit_branch})
   3. Tag + release       ✓ {N} releases created (one tag per repo, listed below)
   4. SRCREV/PKGREV        ✓ {N} components updated + pushed to Gerrit under topic {topic}
   5. Gerrit cherry-pick   ✓ {N} Gerrit change(s) pushed under topic {topic}
@@ -461,7 +652,13 @@ was touched)
 ## Verify Completion
 
 Before declaring done, confirm:
-- [ ] All four required inputs were collected before the cherry-pick plan was printed
+- [ ] All three required inputs were collected before the cherry-pick plan was printed
+- [ ] GitHub branch was never asked for — it was resolved per repo from the Gerrit branch's `pkgrev.inc` tag, falling back to asking only when resolution genuinely failed for a specific repo (missing component, tag not on GitHub, or orphan tag unreachable from any branch)
+- [ ] A tag in an unexpected or non-stable2 format (plain semver, custom suffix, etc.) was never treated as a reason to ask the user — it was resolved from GitHub like any other tag
+- [ ] When a tag's commit wasn't at any branch tip, a new branch was created automatically from that commit (or reused if it already existed) instead of asking the user — named `{existing_github_branch}_{gerrit_branch}` if the base was already a `support/*` branch, or `support/{gerrit_branch}` if the base was `develop`/any other non-`support/*` branch
+- [ ] "No branch points at tag X's tip" never appeared as a standalone question to the user — it's an internal, same-turn transition into the containing-branch check, not a stopping point
+- [ ] `develop` (or the repo's default branch) was treated as a normal candidate for `{existing_github_branch}` when it contains the tag — never excluded or special-cased for *finding* it, only for how the new branch is *named*
+- [ ] Before declaring a tag an orphan (unreachable from any branch), the local clone was confirmed to have full, non-shallow history
 - [ ] Every ticket's PRs were discovered and merged into one per-repo commit list before cherry-picking (no repo processed twice)
 - [ ] Exactly one combined cherry-pick plan was printed and approved before any GitHub change was made
 - [ ] Every repo's tag was computed from that repo's own latest stable2-pattern tag (never a plain main tag, never assumed) and confirmed individually with the user, with override honored if given

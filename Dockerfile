@@ -25,7 +25,12 @@ FROM node:22-slim
 # release-config.json via jq, not python -- ported as-is from the
 # original toolkit rather than rewritten, so this is a real dependency,
 # not an optional nicety.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# This network has seen frequent mid-download hangs/drops through a
+# corporate inspecting proxy -- short timeouts + retries + forcing IPv4
+# (the proxy appears to blackhole some IPv6 attempts) recovers far more
+# reliably than re-running the whole RUN step by hand.
+RUN echo 'Acquire::Retries "5"; Acquire::http::Timeout "15"; Acquire::https::Timeout "15"; Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99-retry \
+    && apt-get update && apt-get install -y --no-install-recommends \
     ripgrep git ca-certificates curl gnupg python3 python3-yaml python3-pip \
     git-flow jq \
     && rm -rf /var/lib/apt/lists/*

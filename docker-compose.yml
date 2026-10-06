@@ -18,6 +18,11 @@ services:
       - OPENCODE_SERVER_PASSWORD=
       - PORTAL_OPENCODE_USERNAME=opencode
       - PORTAL_OPENCODE_PASSWORD=
+      # Overrides config.py's default (the Flow-gateway proxy model) --
+      # set on the host (see .env) to use a different provider/model,
+      # e.g. github-copilot/claude-sonnet-5 once `opencode auth login`
+      # has been completed inside the container.
+      - PORTAL_MODEL=${PORTAL_MODEL:-rdkb-release-agent/claude-4-6-sonnet}
       # Only matters for local frontend dev against this container's API
       # directly (e.g. `cd frontend && npm run dev`, hitting this
       # container's :8000) -- the built-in single-container deployment
