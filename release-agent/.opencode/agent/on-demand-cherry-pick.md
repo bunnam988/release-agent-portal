@@ -45,9 +45,12 @@ tagged, and pushed once:
 ## Tag Naming — compute, never assume
 
 Real examples of what exists on these branches today:
-- Main tag: `2.9.1` (plain semver — irrelevant here, that's main-tagging's
-  concern, not this workflow's)
+- Main tag: `2.9.1` (plain semver base release tag — only used as a
+  fallback base, per rule 4c below, when no stable2-pattern tag exists
+  yet on the branch)
 - Stable2 tag: `2.3.0_stable2_20260916` (`{base}_stable2_{YYYYMMDD}`)
+- Versioned stable2 tag: `2.0.0_stable2_20260306_v5`
+  (`{stable2_tag}_v{N}` — a plain version bump, distinct from a hotfix)
 - On-demand hotfix tag: `2.3.0_stable2_20260617_hotfix_v3`
   (`{stable2_tag}_hotfix_v{N}`)
 
@@ -55,32 +58,73 @@ For **each repo** that received new commits in Phase 2, compute its tag
 like this:
 
 1. Find the latest tag reachable from `{repo_github_branch}` that matches
-   **specifically** the stable2 naming pattern:
+   **specifically** the stable2 naming pattern, with or without a
+   trailing `_vN` or `_hotfix_vN` suffix:
    ```bash
    git tag --merged origin/{repo_github_branch} --sort=-creatordate \
-     | grep -E '^[0-9]+\.[0-9]+\.[0-9]+_stable2_[0-9]{8}(_hotfix_v[0-9]+)?$' \
+     | grep -E '^[0-9]+\.[0-9]+\.[0-9]+_stable2_[0-9]{8}(_v[0-9]+|_hotfix_v[0-9]+)?$' \
      | head -1
    ```
-   This matches both a plain stable2 tag and an already-hotfixed one.
-   **Ignore plain semver tags like `2.9.1` even if they are more recent** —
-   they are not a valid base for this workflow.
-2. **If no such tag is found for this repo:** do not guess, do not fall
-   back to any other tag. Stop for this repo specifically and ask the
-   user directly:
+2. **If no stable2-pattern tag is found**, fall back to the latest plain
+   semver tag reachable from the branch instead of asking immediately:
+   ```bash
+   git tag --merged origin/{repo_github_branch} --sort=-creatordate \
+     | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+     | head -1
    ```
-   No stable2-pattern tag found on {repo_github_branch} for {repo}.
-   What tag would you like to use for this repo?
+   - **If a plain semver tag is found:** treat it as `found_tag` and
+     compute `computed_tag` from it per rule 4c below (today's date, no
+     existing stable2 date to reuse).
+   - **If nothing at all is found** (no stable2-pattern tag and no plain
+     semver tag reachable from the branch): do not guess further. Stop
+     for this repo specifically and ask the user directly:
+     ```
+     No stable2-pattern or semver tag found on {repo_github_branch} for {repo}.
+     What tag would you like to use for this repo?
+     ```
+     Use whatever they type, verbatim, as this repo's tag (skip the
+     increment logic below for this repo since there is no base to
+     increment from).
+3. (Reserved — see rule 4's three shapes below; there is no separate
+   step 3.)
+4. **Compute `computed_tag` from `found_tag`**, based on which of these
+   shapes it has:
+   a. **Ends in `_v{N}`** (a plain version bump, e.g.
+      `2.0.0_stable2_20260306_v5`): keep everything before that suffix
+      unchanged and increment only the number:
+      `computed_tag = "{everything_before}_v{N+1}"`
+      (e.g. `2.0.0_stable2_20260306_v5` → `2.0.0_stable2_20260306_v6`).
+   b. **Ends in `_hotfix_v{N}`** (e.g.
+      `2.3.0_stable2_20260617_hotfix_v3`): keep everything before that
+      suffix unchanged and increment the number:
+      `computed_tag = "{everything_before}_hotfix_v{N+1}"`
+      (e.g. `..._hotfix_v3` → `..._hotfix_v4`).
+   c. **Has neither suffix:**
+      - If `found_tag` already matches the stable2 pattern
+        (`X.Y.Z_stable2_YYYYMMDD`, from step 1):
+        `computed_tag = "{found_tag}_hotfix_v1"`.
+      - If `found_tag` is a plain semver tag instead (from step 2's
+        fallback, e.g. `1.0.0` or `2.0.0`):
+        `computed_tag = "{found_tag}_stable2_{current_date}_hotfix_v1"`,
+        using **today's date** (`YYYYMMDD`) — there is no existing
+        stable2 date on the tag to reuse
+        (e.g. `1.0.0` → `1.0.0_stable2_20261007_hotfix_v1`).
+5. **Before proposing `computed_tag` to the user, verify it doesn't
+   already exist** on the real GitHub repo:
+   ```bash
+   git ls-remote --tags https://github.com/{github_org}/{repo}.git "refs/tags/{computed_tag}"
    ```
-   Use whatever they type, verbatim, as this repo's tag (skip the
-   hotfix-increment logic below for this repo since there is no base to
-   increment from).
-3. **If found and it has no `_hotfix_v` suffix** (a plain stable2 tag):
-   `computed_tag = "{found_tag}_hotfix_v1"`
-4. **If found and it already ends in `_hotfix_v{N}`**: keep everything
-   before that suffix unchanged and increment the number:
-   `computed_tag = "{everything_before}_hotfix_v{N+1}"`
-   (e.g. `..._hotfix_v3` → `..._hotfix_v4`)
-5. **Always confirm per repo before using it**, one repo at a time:
+   **If it already exists:** do not silently reuse it, overwrite it, or
+   keep auto-incrementing on your own — stop for this repo specifically
+   and ask:
+   ```
+   Tag {computed_tag} already exists on GitHub for {repo}.
+   Enter the tag to use for {repo} instead:
+   ```
+   Use whatever they type, verbatim, as this repo's final tag — skip
+   step 6's confirmation for this repo, they already just typed it.
+   **If it doesn't exist:** continue to step 6 to confirm it as normal.
+6. **Always confirm per repo before using it**, one repo at a time:
    ```
    {repo}: latest stable2 tag is {found_tag} → proposed new tag {computed_tag}
    Use this tag? [Y/n]
@@ -89,7 +133,7 @@ like this:
    `Enter the tag to use for {repo}:` and use whatever they type instead.
    This is a genuine per-repo decision point, not a "proceed to next
    phase?" gate — ask for every repo, even if there are several.
-6. **Extract `{base_tag}`** — the plain `X.Y.Z` semver prefix — from the final
+7. **Extract `{base_tag}`** — the plain `X.Y.Z` semver prefix — from the final
    tag, for use as the changelog's comparison point in Phase 4 (so the release
    notes span everything since the original semver release, not just since the
    immediately preceding stable2/hotfix tag):
@@ -222,23 +266,44 @@ before the cherry-pick plan is printed (see "Before Starting" step 4).
          git ls-remote --heads https://github.com/{github_org}/{repo}.git
          ```
          Match the SHA from step b against this list.
-         - **Exactly one match:** the tag is already at the tip — that
-           branch is `{existing_github_branch}`. Continue to step 7 to
-           compute `{repo_github_branch}` from it; a tip match is never
-           reused directly as `{repo_github_branch}` itself — this run
-           still gets its own dedicated branch, named per step 7's
-           convention, same as every other case.
-         - **More than one match:** prefer whichever matching branch name
-           equals `support_branch` from `config/config.yaml` if it's
-           among them as `{existing_github_branch}`; otherwise list the
-           matches and ask the user which one to treat as
-           `{existing_github_branch}`. Either way, continue to step 7
-           next — never skip straight to step 9.
+         - **Exactly one match:** the tag is already exactly at the tip
+           of `{existing_github_branch}` — there's no divergence for a
+           dedicated branch to capture, so **reuse
+           `{existing_github_branch}` directly as `{repo_github_branch}`,
+           unchanged**. Do **not** rename it and do **not** create a new
+           branch — skip step 7's renaming and steps 8–9's create/reuse
+           logic entirely for this repo; go straight to step 3 below to
+           carry the resolved branch forward. Report it:
+           `{repo}: tag {tag} is an exact tip match of
+           {existing_github_branch} — reusing it as-is, no new branch
+           needed.`
+           **Exception:** if that one matching branch is `develop` (or
+           whatever the repo's default branch is), do **not** reuse it
+           directly — stable2/hotfix work must never land on the default
+           branch, even when the tag sits exactly at its tip. Instead,
+           treat `develop` as `{existing_github_branch}` and continue to
+           step 7, which will produce a dedicated `support/{gerrit_branch}`
+           created from this same commit.
+         - **More than one match:** if `develop` (or the repo's default
+           branch) is one of the matches, treat it as
+           `{existing_github_branch}` and go straight to step 7 — never
+           reuse a direct tip match that is the default branch (see the
+           exception above), and never let a `support/*` match outrank
+           `develop` here either. Otherwise (no `develop` among the
+           matches), prefer whichever matching branch name equals
+           `support_branch` from `config/config.yaml` if it's among them
+           as `{existing_github_branch}` and reuse it directly as
+           `{repo_github_branch}`, same as the single-match case above;
+           if neither applies, list the matches and ask the user which
+           one to treat as `{existing_github_branch}`, then reuse
+           whichever they pick directly, same as above.
          - **No match:** do not ask anything yet. Continue immediately to
            step 2 below — the tag has simply moved past every branch
            tip, which is the common case for older/placeholder tags like
            `1.0.0`, and is resolved automatically the same way regardless
-           of whether the tag looks like a stable2 tag or not.
+           of whether the tag looks like a stable2 tag or not. (Only this
+           no-tip-match path ever reaches step 7's dedicated-branch
+           naming — an exact tip match never does.)
       2. **(Only reached when step 1 found no tip match.)** Use GitHub's
          own compare API to check containment directly — **no local
          clone needed for this check**, just the already-authenticated
@@ -267,12 +332,20 @@ before the cherry-pick plan is printed (see "Before Starting" step 4).
       4. **Exactly one candidate branch:** that's `{existing_github_branch}`
          — including `develop` itself if that's the only candidate.
          Continue to step 7, still without asking anything.
-      5. **More than one candidate branch:** prefer whichever equals
-         `support_branch` from `config/config.yaml` if it's among them;
-         otherwise list the candidates and ask the user which one to
-         treat as `{existing_github_branch}` — this is picking from a
-         real list of candidates, not inventing a branch name. Either
-         way, continue to step 7 next.
+      5. **More than one candidate branch:** prefer `develop` (or the
+         repo's default branch) as `{existing_github_branch}` if it's
+         among the candidates — never let a `support/*` candidate,
+         including `config/config.yaml`'s `support_branch` default,
+         outrank `develop` here. Basing the new dedicated branch on
+         `develop` (via step 7's naming) keeps it isolated from whatever
+         that other support branch actually is, which may not be the
+         right fit for this tag at all. Only if `develop` is **not** one
+         of the candidates, prefer whichever remaining candidate equals
+         `support_branch` from `config/config.yaml`; if neither applies,
+         list the candidates and ask the user which one to treat as
+         `{existing_github_branch}` — this is picking from a real list of
+         candidates, not inventing a branch name. Either way, continue to
+         step 7 next.
       6. **None found:** before concluding this is a true orphan tag,
          confirm step 2 actually ran against **every** branch from step
          1's `ls-remote --heads` output (not a subset) — a partial scan
@@ -287,9 +360,11 @@ before the cherry-pick plan is printed (see "Before Starting" step 4).
          Tag {tag} for {repo} isn't reachable from any GitHub branch.
          Enter the GitHub branch to use for {repo}:
          ```
-      7. Compute the new branch name — the naming convention depends on
-         whether `{existing_github_branch}` already follows the
-         `support/*` convention:
+      7. **(Only reached via steps 2–6's containment match — an exact tip
+         match from step 1 already skipped straight to step 3 and never
+         reaches here.)** Compute the new branch name — the naming
+         convention depends on whether `{existing_github_branch}` already
+         follows the `support/*` convention:
          - **If `{existing_github_branch}` starts with `support/`:**
            `{repo_github_branch} = "{existing_github_branch}_{gerrit_branch}"`
            (e.g. `support/2026q2` + `8.5_p1b` → `support/2026q2_8.5_p1b`).
@@ -485,12 +560,13 @@ If zero repos succeeded, skip Phases 3–4 and go straight to Phase 5
 
 For each repo that succeeded in Phase 2, follow **Tag Naming** above in
 full: detect the latest stable2-pattern tag reachable from **that repo's
-own `{repo_github_branch}`** (or stop and ask if none exists for that
-repo), compute the hotfix tag, confirm it with the user (or take their
-override) — one repo at a time.
+own `{repo_github_branch}`**, falling back to the latest plain semver tag
+if no stable2-pattern tag exists yet (or stop and ask if neither exists
+for that repo), compute the new tag, verify it doesn't already exist,
+confirm it with the user (or take their override) — one repo at a time.
 
 Once the final tag is confirmed for a repo, create the release with the changelog
-spanning from `{base_tag}` (extracted in Tag Naming step 6 above) to the new tag —
+spanning from `{base_tag}` (extracted in Tag Naming step 7 above) to the new tag —
 if `{base_tag}` couldn't be extracted for this repo, omit `--notes-start-tag` and
 let `--generate-notes` fall back to its own default (previous tag):
 ```bash
@@ -656,13 +732,17 @@ Before declaring done, confirm:
 - [ ] GitHub branch was never asked for — it was resolved per repo from the Gerrit branch's `pkgrev.inc` tag, falling back to asking only when resolution genuinely failed for a specific repo (missing component, tag not on GitHub, or orphan tag unreachable from any branch)
 - [ ] A tag in an unexpected or non-stable2 format (plain semver, custom suffix, etc.) was never treated as a reason to ask the user — it was resolved from GitHub like any other tag
 - [ ] When a tag's commit wasn't at any branch tip, a new branch was created automatically from that commit (or reused if it already existed) instead of asking the user — named `{existing_github_branch}_{gerrit_branch}` if the base was already a `support/*` branch, or `support/{gerrit_branch}` if the base was `develop`/any other non-`support/*` branch
+- [ ] When a tag's commit was an exact tip match of an existing branch, that branch was reused directly as `{repo_github_branch}` unchanged — no new `_{gerrit_branch}`-suffixed branch was created for it
 - [ ] "No branch points at tag X's tip" never appeared as a standalone question to the user — it's an internal, same-turn transition into the containing-branch check, not a stopping point
 - [ ] `develop` (or the repo's default branch) was treated as a normal candidate for `{existing_github_branch}` when it contains the tag — never excluded or special-cased for *finding* it, only for how the new branch is *named*
+- [ ] `develop` was never reused directly as `{repo_github_branch}` (even on an exact tip match) and was always preferred over `config.yaml`'s `support_branch` default when both qualified — so the new dedicated `support/{gerrit_branch}` branch, not develop or an unrelated support branch, is what cherry-picks actually land on
 - [ ] Before declaring a tag an orphan (unreachable from any branch), the local clone was confirmed to have full, non-shallow history
 - [ ] Every ticket's PRs were discovered and merged into one per-repo commit list before cherry-picking (no repo processed twice)
 - [ ] Exactly one combined cherry-pick plan was printed and approved before any GitHub change was made
-- [ ] Every repo's tag was computed from that repo's own latest stable2-pattern tag (never a plain main tag, never assumed) and confirmed individually with the user, with override honored if given
-- [ ] Any repo with no stable2-pattern tag stopped and asked the user directly instead of guessing
+- [ ] Every repo's tag was computed from that repo's own latest stable2-pattern tag — or, if none existed yet, from its latest plain semver tag using today's date — and confirmed individually with the user, with override honored if given
+- [ ] A `_v{N}` suffix was incremented as a plain version bump (`_v{N+1}`), never confused with a `_hotfix_v{N}` suffix, which increments separately
+- [ ] Any repo with neither a stable2-pattern tag nor a plain semver tag stopped and asked the user directly instead of guessing
+- [ ] Before proposing a computed hotfix tag, it was checked against existing GitHub tags for that repo — if it already existed, the user was asked for a replacement instead of silently reusing/overwriting it or auto-incrementing further
 - [ ] `pr_list.yaml` was never written or overwritten
 - [ ] `.stable2-meta-sync/meta-rdk-broadband` was never touched — only `.on-demand-cherry-pick/meta-rdk-broadband` was used
 - [ ] No stable2 session-state file was read or written
