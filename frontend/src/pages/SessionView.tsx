@@ -1104,8 +1104,13 @@ export default function SessionView() {
   // A phased orchestrator that's gone idle before finishing its own last
   // phase is, by definition, just paused for a confirmation -- not done.
   const phasesRemain = !!phaseLabels && completedPhases < phaseLabels.length
-  const isComplete =
-    hasStarted && !busy && !waitingForInput && !phasesRemain && !endsWithConfirmationPrompt(finalText)
+  // AGENTS.md's ===RESULT=== block is the one unambiguous "this run has
+  // truly finished" signal every skill is instructed to emit as the very
+  // last thing in its final message -- unlike guessing from how a message
+  // happens to end (a trailing "?[Y/n]" can be buried inside a fenced
+  // code block, or followed by more prose with no "?" at all, as seen in
+  // practice), resultBlock's presence can't be defeated by formatting.
+  const isComplete = hasStarted && !busy && !waitingForInput && !phasesRemain && !!resultBlock
 
   return (
     <div className="session-view">
