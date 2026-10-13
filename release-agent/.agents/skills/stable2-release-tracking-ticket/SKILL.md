@@ -32,6 +32,10 @@ links to every Jira ticket that was successfully cherry-picked this cycle.
 - Always print the full confirmation table before any Jira mutation.
 - Do NOT transition the created ticket to any status — leave it as `New`.
 - If `--dry-run`: print all planned actions, create no Jira tickets, add no links.
+- **Scope of "stop" below:** every "stop" in this skill means stop *this skill only* and
+  report no ticket was created — it never means abort a calling orchestrator
+  (`stable2-meta-sync-orchestrator` must still move on to its next phase, falling back to
+  asking for a Gerrit topic manually, exactly as if this were run in `--dry-run`).
 
 ## Test-Repo Mode
 If `--test-repo` is present, apply the same approved-repo filtering used in the
@@ -70,16 +74,31 @@ Use exactly these values (based on reference ticket RDKB-66564):
 | Summary              | `[{start_date}] - [{end_date}] bi-weekly stable2 sync`               |
 | Priority             | P1                                                                    |
 | Component/s          | `meta-rdk-broadband`                                                  |
-| Branch               | `Stable2`                                                             |
-| RDK SI impact        | `5 - None`                                                            |
-| Risk Score           | `5`                                                                   |
-| Patch_worthy         | `Pending`                                                             |
-| Blocker              | `Pending`                                                             |
-| Regression_in_master | `Pending`                                                             |
-| Test Coverage        | `No`                                                                  |
-| Resolution Type      | `Fixed`                                                               |
 | Description          | `[{start_date}] - [{end_date}] bi-weekly stable2 sync`               |
-| All other fields     | Leave at default / unset                                              |
+
+The fields above are standard Jira fields (`project`, `issuetype`, `summary`, `priority`,
+`components`, `description`) and are always safe to send by name — include them every time.
+
+The remaining reference-ticket fields below are **project-specific custom fields**
+(`Branch`, `RDK SI impact`, `Risk Score`, `Patch_worthy`, `Blocker`, `Regression_in_master`,
+`Test Coverage`, `Resolution Type`). **Never guess their `customfield_NNNNN` IDs.**
+`jira_rest.py` has no `get_create_metadata` equivalent to look them up. Only include one of
+these in the create payload if its real `customfield_NNNNN` ID for the RDKB project has
+already been confirmed (e.g. by the user, or from a prior successful create/update in this
+project) — otherwise omit it entirely from Step 4's payload and note in the final report
+which ones were left unset because their field IDs aren't confirmed:
+
+| Field                | Value      |
+|----------------------|------------|
+| Branch               | `Stable2`  |
+| RDK SI impact        | `5 - None` |
+| Risk Score           | `5`        |
+| Patch_worthy         | `Pending`  |
+| Blocker              | `Pending`  |
+| Regression_in_master | `Pending`  |
+| Test Coverage        | `No`       |
+| Resolution Type      | `Fixed`    |
+| All other fields     | Leave at default / unset |
 
 ## Workflow
 
@@ -127,14 +146,20 @@ Create this tracking ticket and add {N} 'deploys' links? [Y/n]
 If user answers `n`, stop with no changes.
 
 ### Step 4 — Create Jira Ticket (skip in --dry-run)
-Build a JSON fields object from the table in "Jira Ticket Fields" above (project as
+Build a JSON fields object with the standard fields from "Jira Ticket Fields" above (project as
 `{"key": "RDKB"}`, issuetype as `{"name": "Task"}`, priority as `{"name": "P1"}`,
-components as `[{"name": "meta-rdk-broadband"}]`, remaining fields as their plain
-string/value), write it to a temp file, then:
+components as `[{"name": "meta-rdk-broadband"}]`, summary/description as plain strings), plus
+any custom fields whose `customfield_NNNNN` ID is already confirmed — write it to a temp file,
+then:
 ```bash
 python3 scripts/jira_rest.py create-issue /path/to/fields.json
 ```
 Store the returned `.key` as `{tracking_ticket_key}`.
+
+**If the call fails with a 400 referencing an unknown/invalid field:** do not guess a
+different field name or ID. Report the exact Jira error, drop only the offending field from
+the payload, and retry once with the remaining fields. If it still fails, stop and show the
+user the exact error — do not keep guessing.
 
 Print immediately after creation:
 ```

@@ -543,6 +543,12 @@ checking out `{repo_github_branch}` (never creating it — it must already
 exist, since it was resolved from a live tag), cherry-picking with `-x`,
 conflict auto-resolution, and pushing.
 
+**Commit title must stay exactly as it was on `develop`.** Never pass
+`-e`/`--edit` and never reword the message when resolving conflicts —
+always continue with `--continue --no-edit`. The cherry-picked commit's
+title on the target branch must be identical to its title on `develop`
+for every repo, regardless of which Gerrit/GitHub branch it lands on.
+
 Print the script's own final report. Only repos with at least one
 succeeded commit and no `repo_error` carry into Phase 3 — report, do not
 silently drop, any repo that failed.
