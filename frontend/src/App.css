@@ -1724,18 +1724,21 @@ button:disabled {
 
 .stage-card-fields {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 4px 16px;
   position: relative;
 }
 
 .stage-card-field {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 8px;
+  align-items: baseline;
+  gap: 2px 8px;
   font-size: 0.8rem;
   padding: 4px 0;
   border-bottom: 1px dashed var(--border);
+  min-width: 0;
 }
 
 .stage-card-field:last-child {
@@ -1744,12 +1747,17 @@ button:disabled {
 
 .stage-card-field-key {
   color: var(--text-dim);
+  flex-shrink: 0;
 }
 
 .stage-card-field-value {
   color: var(--stage-color, var(--text));
   font-weight: 700;
   text-align: right;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .result-panel {
@@ -1927,7 +1935,10 @@ button:disabled {
   padding: 8px 12px;
   text-align: left;
   border-bottom: 1px solid var(--border);
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 320px;
 }
 
 .result-table th {
@@ -2513,11 +2524,6 @@ button:disabled {
 
   .result-table-wrap {
     max-width: 100%;
-  }
-
-  .result-table th,
-  .result-table td {
-    white-space: normal;
   }
 
   .complete-banner {
