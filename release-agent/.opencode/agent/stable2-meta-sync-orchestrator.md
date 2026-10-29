@@ -48,6 +48,16 @@ Run the post-PR-collection stable2 sync flow in this order:
   `release_session.yaml` (create the file/list if absent) — this is the only source of truth
   Phase 3's tracking ticket uses; do not skip this even in `--dry-run` (still append there, just
   don't create Jira/GitHub/Gerrit changes)
+- **Output format consistency — ALL 6 phases, every run:** every printed
+  report/plan/table in this agent (Phase 1's cherry-pick summary, Phase 4's
+  tagging plan, Phase 5's SRCREV resolution report, Phase 6's Gerrit
+  confirmation, etc.) must use the exact same fixed, deterministic layout
+  every single run — same headings, same fields, same structure. Never vary
+  a report's shape based on `--dry-run`, `--test-repo`, or how many
+  repos/tickets/PRs are involved this run — only the actual data inside that
+  fixed layout changes. Same standing rule as `stable2-release-orchestrator.md`'s
+  own copy of this constraint; it applies here too since this agent is
+  invoked as that orchestrator's Phase 5.
 
 ## Inputs
 Required existing artifacts:
@@ -91,13 +101,13 @@ GitHub branch + Gerrit branch resolved and confirmed with the user ("Before Star
 4. **Resolve target branches — never assume `support/stable2`:**
    - Ask:
      ```text
-     GitHub target branch for cherry-pick/tagging [default: {support_branch} from config.yaml]:
+     GitHub target branch for core-nw (rdkcentral) cherry-pick/tagging [default: {support_branch} from config.yaml]:
      ```
      Pressing Enter keeps `{support_branch}` from config.yaml; any other input overrides it for
      this run only. Store the result as `{github_branch}`.
    - Ask:
      ```text
-     Gerrit target branch for cherry-pick/meta sync [default: {meta_support_branch} from config.yaml]:
+     Gerrit target branch for core-nw meta sync (meta-rdk-broadband) [default: {meta_support_branch} from config.yaml]:
      ```
      Pressing Enter keeps `{meta_support_branch}` from config.yaml; any other input overrides it
      for this run only. Store the result as `{gerrit_branch}`.
@@ -109,10 +119,27 @@ GitHub branch + Gerrit branch resolved and confirmed with the user ("Before Star
      ```text
      No branch named "{gerrit_branch}" found on {gerrit_repo}. Enter a different Gerrit branch:
      ```
-   - Print both resolved values before continuing:
+   - **If any GDCS (`rdk-gdcs`) repos are present in scope** (any repo in `pr_list.yaml`
+     whose owner matches `github_org` in `config/tracked_repos_gdcs_stable2.yaml`), ask two
+     more, separate from the core-nw ones above — never assume they match:
      ```text
-     Using GitHub branch: {github_branch}
-     Using Gerrit branch: {gerrit_branch}
+     GitHub target branch for GDCS (rdk-gdcs) cherry-pick/tagging [default: same as above, {github_branch}]:
+     ```
+     Store as `{mesh_github_branch}` (Enter reuses `{github_branch}`).
+     ```text
+     Gerrit target branch for GDCS meta sync (meta-rdk-comcast-broadband) [default: {mesh_meta_support_branch} from config.yaml]:
+     ```
+     Store as `{mesh_gerrit_branch}`, then verify it exists the same way:
+     ```bash
+     git ls-remote --heads https://{gerrit_host}/{mesh_gerrit_repo} {mesh_gerrit_branch}
+     ```
+     Same re-ask-on-empty rule as `{gerrit_branch}` above.
+   - Print all resolved values before continuing:
+     ```text
+     Using core-nw GitHub branch: {github_branch}
+     Using core-nw Gerrit branch: {gerrit_branch}
+     Using GDCS GitHub branch:    {mesh_github_branch}  (or "none — no GDCS repos in scope")
+     Using GDCS Gerrit branch:    {mesh_gerrit_branch}  (or "none — no GDCS repos in scope")
      ```
    - These apply to every phase below (Phase 1 cherry-pick target, Phase 4 tagging/PKGREV branch,
      Phase 6 Gerrit cherry-pick/meta-layer branch) — do not fall back to the config defaults once
@@ -179,17 +206,40 @@ Run with these rules:
 2. Read `pr_list.yaml`
 3. Build repo scope from READY PR entries in `pr_list.yaml` (default behavior)
 4. Optionally narrow to one repo only when user provides `--repo`
-5. Cherry-pick matching READY commits to `{github_branch}` (resolved in "Before Starting" step 4 —
-   never the hardcoded `support/stable2` default)
+5. Cherry-pick matching READY commits to `{github_branch}` (core-nw repos) or
+   `{mesh_github_branch}` (GDCS repos) — resolved in "Before Starting" step 4,
+   never the hardcoded `support/stable2` default
 6. If conflict/error in a repo, report repo + commit ids and continue other repos
 
-Suggested commands (always pass `--branch {github_branch}` explicitly — do not rely on the
-script's own `support/stable2` default):
+**Run as two separate invocations when GDCS repos are present in scope** —
+`cherry_pick_to_stable2.py` only works under ONE active `gh`/git credential
+identity at a time, and `rdk-gdcs` repos need `$GH_MESH_USER` while
+`rdkcentral` repos need the default identity (same rule as
+`on-demand-cherry-pick.md`'s "GitHub Identity — Per-Repo Org Switch"):
 
-Dry-run over all READY tickets:
-```bash
-python3 scripts/cherry_pick_to_stable2.py --branch {github_branch} --dry-run
-```
+1. Record `{default_gh_user}` (`gh auth status --hostname github.com`,
+   the account with `Active account: true`).
+2. Run the core-nw batch first, under `{default_gh_user}` (already active,
+   no switch needed), scoped with `--github-org rdkcentral`:
+   ```bash
+   python3 scripts/cherry_pick_to_stable2.py --branch {github_branch} --github-org rdkcentral {dry_run_flag}
+   ```
+3. If GDCS repos are in scope, switch identity: `gh auth switch --hostname
+   github.com --user "$GH_MESH_USER"` (STOP if `$GH_MESH_USER` is unset —
+   do not guess), verify with `gh auth status`, then run:
+   ```bash
+   python3 scripts/cherry_pick_to_stable2.py --branch {mesh_github_branch} --github-org rdk-gdcs {dry_run_flag}
+   ```
+   If a GDCS lookup 404s even with `$GH_MESH_USER` active, that means the
+   token needs SSO authorization for `comcast-global` — tell the user,
+   don't conclude the repo is missing.
+4. Switch back to `{default_gh_user}` immediately after the GDCS batch
+   completes (success or failure) — before moving to Phase 1's
+   `release_session.yaml` update below.
+
+Suggested commands for narrower/manual runs (always pass `--branch` explicitly
+— do not rely on the script's own `support/stable2` default; pass
+`--github-org` too when you know which identity is already active):
 
 Single repo apply and push:
 ```bash
@@ -206,7 +256,7 @@ Manual cherry-pick for specific commits:
 python3 scripts/cherry_pick_to_stable2.py --repo <org/repo_or_url> --branch {github_branch} --commits <commit_id_1,commit_id_2>
 ```
 
-After the script finishes, before printing the Phase 1 report, update `release_session.yaml`:
+After both batches finish, before printing the Phase 1 report, update `release_session.yaml`:
 - For every ticket the script's own "SUCCEEDED" report lists, look up that ticket's full entry
   in `pr_list.yaml` (`ticket`, `repo`/component, `number`, `merge_commit_sha`) — use the full
   40-char SHA from `pr_list.yaml`, not the truncated one the script prints.
@@ -341,11 +391,21 @@ Prompt:
 Proceed with Phase 4? [Y/n]
 ```
 
+**Stop here and wait for the reply** (see AGENTS.md's "Confirmation gates
+and questions") before invoking the sub-skill below. Once invoked,
+`stable2-github-release-tagger` prints its own proposed per-repo tag plan
+and asks its own separate "Create GitHub stable2 releases for all repos
+above? [Y/n]" gate (its Step 4) — that is a real, second stop of its own;
+do not answer it automatically just because Phase 4 itself was approved.
+
 Invoke (forward the resolved branches so this phase never falls back to config.yaml's
-`support_branch`/`meta_support_branch` on its own):
+`support_branch`/`meta_support_branch` on its own; also forward the GDCS branches
+resolved in "Before Starting" step 4 when GDCS repos are in scope, so
+`stable2-github-release-tagger` doesn't need to ask for them again):
 ```bash
-/stable2-github-release-tagger --support-branch {github_branch} --meta-support-branch {gerrit_branch} {all_args}
+/stable2-github-release-tagger --support-branch {github_branch} --meta-support-branch {gerrit_branch} --mesh-support-branch {mesh_github_branch} --mesh-meta-support-branch {mesh_gerrit_branch} {all_args}
 ```
+(Omit the two `--mesh-*` flags entirely if no GDCS repos are in scope this run.)
 
 After completion print:
 ```text
@@ -363,9 +423,13 @@ Proceed to Phase 5? [Y/n]
 **Skill:** `stable2-srcrev-updater`
 
 This phase will:
-- ask the user which ref to resolve
+- ask the user which ref to resolve (core-nw and, separately, GDCS if GDCS
+  repos are in scope)
 - resolve SHAs using `git ls-remote`
-- prepare local `generic-srcrev.inc` changes for successfully tagged repos only
+- prepare local `generic-srcrev.inc` changes for eligible repos: core-nw
+  repos that were successfully tagged, PLUS every GDCS repo in scope
+  (GDCS SRCREV-only repos never go through tagging at all, so they're
+  included here regardless of Phase 4's tagging outcome)
 - print the full repo/ref/SHA plan and ask for confirmation before file edits
 
 Prompt:
@@ -396,9 +460,13 @@ Proceed to Phase 6? [Y/n]
 This phase will:
 - run the existing Gerrit cherry-pick workflow for Jira-linked Gerrit changes
 - additionally include prepared meta-rdk-broadband `generic-pkgrev.inc` and `generic-srcrev.inc` updates as one extra Gerrit change
+- if GDCS repos were in scope, ALSO include prepared meta-rdk-comcast-broadband
+  `generic-srcrev.inc` (and `generic-pkgrev.inc`, only if a `tag_eligible: true`
+  GDCS repo was processed) updates as a SECOND, separate extra Gerrit change
+  (different Gerrit project — see `gerrit-cherrypick-squash` Step 5h)
 - use the Phase 2 tracking ticket's key as the Gerrit topic (not a free-text prompt) — this
-  also makes `gerrit-cherrypick-squash` add a `Sync-Ticket: {key}` field to the meta-layer
-  commit specifically, since that commit has no ticket of its own (see that skill's Step 5g)
+  also makes `gerrit-cherrypick-squash` add a `Sync-Ticket: {key}` field to each meta-layer
+  commit specifically, since neither commit has a ticket of its own (see that skill's Steps 5g/5h)
 - print the Gerrit topic, ticket set, and meta-layer files to be included before invoking Gerrit operations
 - remain independent from any GitHub repo cherry-pick script outcome
 - keep existing Gerrit dependency traversal and squash behavior unchanged
@@ -422,10 +490,12 @@ If user presses Enter, use all READY ticket keys from `stable2_status_analysis.y
 Final confirmation:
 ```text
 Configuration:
-  Gerrit branch: {gerrit_branch}  (resolved and verified in "Before Starting" step 4)
+  Gerrit branch:      {gerrit_branch}  (resolved and verified in "Before Starting" step 4)
+  GDCS Gerrit branch: {mesh_gerrit_branch}  (or "none — no GDCS repos in scope")
   Gerrit topic:  {topic_name}  (tracking ticket key, or manually entered if no ticket exists)
   Ticket keys:   {ticket_keys}
-  Meta updates:  generic-pkgrev.inc + generic-srcrev.inc
+  Meta updates:  generic-pkgrev.inc + generic-srcrev.inc (meta-rdk-broadband)
+                 generic-srcrev.inc [+ generic-pkgrev.inc if tag-eligible] (meta-rdk-comcast-broadband, if GDCS repos were in scope)
 
 Proceed with Phase 6? [Y/n]
 ```
@@ -443,8 +513,10 @@ If `--dry-run` is present:
 DRY-RUN: Gerrit phase preview only
 Would invoke gerrit-cherrypick-squash with topic {topic_name}
 Would include prepared meta-layer files:
-  - conf/include/generic-pkgrev.inc
-  - conf/include/generic-srcrev.inc
+  - conf/include/generic-pkgrev.inc  (meta-rdk-broadband)
+  - conf/include/generic-srcrev.inc  (meta-rdk-broadband)
+  - conf/include/generic-srcrev.inc  (meta-rdk-comcast-broadband, if GDCS repos were in scope)
+  - conf/include/generic-pkgrev.inc  (meta-rdk-comcast-broadband, only if a tag-eligible GDCS repo was in scope)
 ```
 
 ## Final Summary
@@ -470,13 +542,18 @@ Artifacts:
   - stable2_srcrev_updates.yaml
 
 Meta-layer files prepared:
-  - conf/include/generic-pkgrev.inc
-  - conf/include/generic-srcrev.inc
+  - conf/include/generic-pkgrev.inc  (meta-rdk-broadband)
+  - conf/include/generic-srcrev.inc  (meta-rdk-broadband)
+  - conf/include/generic-srcrev.inc  (meta-rdk-comcast-broadband, if GDCS repos were in scope)
+  - conf/include/generic-pkgrev.inc  (meta-rdk-comcast-broadband, only if a tag-eligible GDCS repo was in scope)
 ```
 
 ## Verify Completion
 Before declaring done, confirm:
 - [ ] Cherry-pick phase processed all targeted repos and reported failures for manual resolution
+- [ ] If GDCS repos were in scope: cherry-pick ran as two separate identity-scoped batches
+      (`$GH_MESH_USER` for `rdk-gdcs`, default identity for `rdkcentral`), and the default
+      identity was restored before Phase 1 finished
 - [ ] Successfully cherry-picked tickets were appended to `cherry_picks_done` in `release_session.yaml`
 - [ ] Bi-weekly tracking ticket was created (Phase 2, right after cherry-pick) with correct date
       range and `deploys` links to every `cherry_picks_done` ticket
@@ -484,8 +561,11 @@ Before declaring done, confirm:
 - [ ] READY Jira tickets were previewed and confirmed before labeling (after cherry-pick phase)
 - [ ] `track_for_stable2_considered` was added only where missing
 - [ ] Only READY-ticket repos were used
-- [ ] GitHub stable2 tags/releases were created for successful cherry-pick repos
-- [ ] PKGREV and SRCREV were prepared locally for the same successful repo set
+- [ ] GitHub stable2 tags/releases were created for successful cherry-pick repos (GDCS: only
+      the `tag_eligible: true` one(s) — every other GDCS repo never gets a tag/release)
+- [ ] PKGREV and SRCREV were prepared locally for the same successful core-nw repo set, PLUS
+      SRCREV (and, where tag-eligible, PKGREV) for every GDCS repo in scope
 - [ ] Gerrit topic used the Phase 2 tracking ticket's key (or was asked for manually only if no
-      ticket exists), and was shared across normal Gerrit changes and the meta-rdk-broadband change
+      ticket exists), and was shared across normal Gerrit changes, the meta-rdk-broadband change,
+      and (if present) the separate meta-rdk-comcast-broadband change
 - [ ] Final summary was printed

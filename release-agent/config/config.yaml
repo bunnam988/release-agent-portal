@@ -13,6 +13,27 @@ meta_support_branch: "stable2"
 gerrit_host: "gerrit.teamccp.com"
 gerrit_repo: "rdk/yocto_oe/layers/meta-rdk-broadband"
 
+# Mesh Components (rdk-gdcs org) SRCREV tracking lives in a SEPARATE Gerrit
+# project from the one above -- same gerrit_host, different repo path.
+# Used by on-demand-cherry-pick's rdk-gdcs branch-resolution/SRCREV phases
+# (see that agent's "Resolve GitHub Branch — rdk-gdcs (Mesh) Repos" and
+# Phase 4B) AND by the full stable2 pipeline's GDCS extension (track-for-
+# stable2, stable2-github-release-tagger, stable2-srcrev-updater,
+# gerrit-cherrypick-squash Step 5h -- see config/tracked_repos_gdcs_stable2.yaml).
+# NOT INDEPENDENTLY VERIFIED -- update this path if it's wrong.
+mesh_gerrit_repo: "rdk/yocto_oe/layers/meta-rdk-comcast-broadband"
+mesh_srcrev_file: "conf/include/generic-srcrev.inc"
+# Most GDCS stable2 components are SRCREV-only (no GitHub tag/release, no
+# PKGREV) -- only repos marked tag_eligible: true in
+# config/tracked_repos_gdcs_stable2.yaml (today: cujo-ni/cujo-fpingdq, both
+# the same repo) also get this PKGREV file updated, same as core-nw.
+mesh_pkgrev_file: "conf/include/generic-pkgrev.inc"
+# Default answer offered (not assumed) when the stable2 pipeline asks for a
+# separate Gerrit branch for the meta-rdk-comcast-broadband change -- the
+# user is always asked explicitly (see stable2-meta-sync-orchestrator.md
+# "Before Starting" step 4), this is only the pre-filled default.
+mesh_meta_support_branch: "stable2"
+
 # GitHub
 github_org: "rdkcentral"
 

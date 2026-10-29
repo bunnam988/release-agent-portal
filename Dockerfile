@@ -28,11 +28,29 @@ FROM node:22-slim
 # This network has seen frequent mid-download hangs/drops through a
 # corporate inspecting proxy -- short timeouts + retries + forcing IPv4
 # (the proxy appears to blackhole some IPv6 attempts) recovers far more
-# reliably than re-running the whole RUN step by hand.
-RUN echo 'Acquire::Retries "5"; Acquire::http::Timeout "15"; Acquire::https::Timeout "15"; Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99-retry \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    ripgrep git ca-certificates curl gnupg python3 python3-yaml python3-pip \
-    git-flow jq \
+# reliably than re-running the whole RUN step by hand. apt's own
+# Acquire::Retries only covers a single package's fetch; a mid-stream
+# drop on one package out of 70 still fails the whole `apt-get install`
+# (observed in practice), so the outer loop below retries the entire
+# update+install up to 5 times -- self-healing instead of requiring a
+# manual `docker compose up --build` re-run (and a full re-download)
+# every time the proxy hiccups. Pipeline-Depth "0" disables HTTP
+# pipelining -- with it on, a dropped connection can leave a "delayed"
+# pipelined item stuck retrying forever ("Tried to start delayed item...
+# but failed", repeating with no progress and no error/exit), hanging
+# the whole build rather than failing an attempt cleanly (observed once).
+RUN echo 'Acquire::Retries "5"; Acquire::http::Timeout "15"; Acquire::https::Timeout "15"; Acquire::ForceIPv4 "true"; Acquire::http::Pipeline-Depth "0";' > /etc/apt/apt.conf.d/99-retry \
+    && apt-get update \
+    && for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
+         apt-get install -y --no-install-recommends --fix-missing \
+            ripgrep git ca-certificates curl gnupg python3 python3-yaml python3-pip \
+            git-flow jq \
+         && touch /tmp/apt-ok && break; \
+         echo "apt-get install attempt $i/12 failed (likely a transient proxy drop) -- retrying in 5s..."; \
+         sleep 5; \
+       done \
+    && test -f /tmp/apt-ok \
+    && rm -f /tmp/apt-ok \
     && rm -rf /var/lib/apt/lists/*
 
 # auto-changelog — release-agent/scripts/main_tagging_release.py shells
@@ -40,11 +58,20 @@ RUN echo 'Acquire::Retries "5"; Acquire::http::Timeout "15"; Acquire::https::Tim
 RUN npm install -g auto-changelog
 
 # GitHub CLI (`gh`) — several release-agent skills shell out to
-# `gh api`/`gh pr`/`gh release`.
+# `gh api`/`gh pr`/`gh release`. Same outer retry loop as above -- this
+# apt-get install is just as exposed to the same mid-download proxy drops.
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
-    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && for i in 1 2 3 4 5; do \
+         apt-get update \
+         && apt-get install -y --no-install-recommends gh \
+         && touch /tmp/apt-ok && break; \
+         echo "apt-get install gh attempt $i/5 failed (likely a transient proxy drop) -- retrying in 5s..."; \
+         sleep 5; \
+       done \
+    && test -f /tmp/apt-ok \
+    && rm -f /tmp/apt-ok \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g opencode-ai@1.18.7

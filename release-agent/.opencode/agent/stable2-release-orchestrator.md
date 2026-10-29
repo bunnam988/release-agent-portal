@@ -1,6 +1,6 @@
 ---
 name: stable2-release-orchestrator
-description: "Orchestrator for stable2 workflow without GitHub PR labeling. Chains: track-for-stable2 → candidates → status-evaluator → pr-lookup → stable2-meta-sync-orchestrator, where GitHub repo cherry-pick script and Gerrit operations are handled as separate intents. Includes confirmation gates. All arguments passed to orchestrator are forwarded to each skill."
+description: "Orchestrator for stable2 workflow without GitHub PR labeling. Chains: track-for-stable2 → candidates → status-evaluator → pr-lookup → stable2-meta-sync-orchestrator, where GitHub repo cherry-pick script and Gerrit operations are handled as separate intents. Includes confirmation gates. All arguments passed to orchestrator are forwarded to each skill. Repo scope spans both core-nw (rdkcentral, config/tracked_repos.yaml) and GDCS (rdk-gdcs, config/tracked_repos_gdcs_stable2.yaml) stable2 components -- GitHub identity switches automatically per repo's org (GH_MESH_USER for rdk-gdcs)."
 mode: primary
 license: Comcast
 argument-hint: "Optional: '--dry-run' for preview, '--test-repo' for testing with forked repos, '--candidate-label <label>' to scope Jira candidates, '--reset-state' to delete all existing stable2 state/artifact files before starting a fresh cycle, or any other skill-specific arguments"
@@ -30,6 +30,17 @@ Automation of the stable2 release workflow using READY evaluation, PR collection
 - **Test-repo propagation:** If `--test-repo` is provided, ALL invoked skills use test repos
 - **No automatic execution:** Each phase requires explicit user approval
 - **Safety first:** All skills have their own confirmation gates for Jira/GitHub changes
+- **Output format consistency — ALL phases, every run:** every printed report,
+  table, banner, or listing in every phase of this orchestrator — and in every
+  skill/agent it invokes, including all 6 phases inside
+  `stable2-meta-sync-orchestrator` (Phase 5) — must use the exact same fixed,
+  deterministic layout every single run: same headings, same column set/order
+  for any table, same labels, same structure. Never vary the shape of a report
+  based on `--dry-run`, `--test-repo`, how many tickets/repos/PRs are involved,
+  or which run this is — only the actual data inside that fixed layout changes.
+  This is not specific to Phase 4's PR table (see Step 4.3a's own
+  "Consistency requirements" for that one's exact rules) — it is a standing
+  rule for every report this orchestrator or anything it calls ever prints.
 
 ## Workflow Overview
 
@@ -498,7 +509,84 @@ Collect all PRs from all ticket runs, deduplicate by URL.
 
 Save to: `pr_list.yaml` (consolidated list)
 
+### Step 4.3a — Render Grouped PR Table
+
+Build and print this table from the exact same final merged, deduplicated PR
+list produced in Step 4.3 (the data being saved to `pr_list.yaml`) — always
+the real tickets/PRs/repos found this run, never hardcoded or illustrative
+values. This is a presentation-only addition: it does not change what gets
+written to `pr_list.yaml`, does not affect Phase 5's input, and is not a new
+confirmation gate (no extra prompt here) — Step 4.2's progress indicator and
+Step 4.4's summary/prompts below are unchanged.
+
+Skip this step entirely if the merged list has 0 PRs — fall straight into
+Step 4.4's existing "No GitHub PRs found" handling instead.
+
+**Grouping rules:**
+- Group rows by `ticket`, preserving the order tickets were first processed
+  in Step 4.2.
+- Within a ticket's group, order PRs by PR number ascending.
+- Render the Ticket ID **only on the first row of each group**, in bold.
+  Every subsequent PR row for that same ticket leaves the Ticket ID cell as
+  just a continuation indicator: `↳`.
+- If a ticket has exactly one PR, render a single normal row (bold ticket
+  ID) — no continuation row, nothing to continue.
+- Every PR row must show its own correctly aligned repository in the same
+  row — never let a PR's repo drift to a neighboring row.
+- This exact structure (columns, bold-ticket-on-first-row, `↳`
+  continuation, column order) applies identically on every run, whether
+  there is 1 ticket or 50, and whether a ticket has 1 PR or 10 — no
+  shortcuts, no reformatting between runs.
+
+**Table format** (render as a real Markdown table, three columns in this
+exact order):
+
+```
+| Ticket ID | PR Number/Link | Repository Name |
+|---|---|---|
+| **{ticket}** | [PR #{pr_number}]({pr_url}) | {repo_name} |
+| ↳ | [PR #{pr_number}]({pr_url}) | {repo_name} |
+```
+
+Column rules:
+- `{pr_number}` / `{pr_url}` come from that PR's `number`/`url` fields in the
+  merged list. If `url` is missing, render plain `PR #{pr_number}` instead
+  of a broken link — never omit the PR because its URL is missing.
+- `{repo_name}` = the repo basename (e.g. `rdkcentral/utopia` → `utopia`),
+  matching the `component` naming already used elsewhere in this pipeline.
+
+Worked example (illustrative shape only — always substitute this run's real
+data):
+
+| Ticket ID | PR Number/Link | Repository Name |
+|---|---|---|
+| **RDKB-12345** | [PR #101](https://github.com/rdkcentral/repository-a/pull/101) | repository-A |
+| ↳ | [PR #205](https://github.com/rdkcentral/repository-b/pull/205) | repository-B |
+| **RDKB-67890** | [PR #310](https://github.com/rdkcentral/repository-c/pull/310) | repository-C |
+| ↳ | [PR #315](https://github.com/rdkcentral/repository-d/pull/315) | repository-D |
+| ↳ | [PR #320](https://github.com/rdkcentral/repository-e/pull/320) | repository-E |
+| **RDKB-45678** | [PR #410](https://github.com/rdkcentral/repository-f/pull/410) | repository-F |
+
+**Consistency requirements — identical on every run, no exceptions:**
+- Always render this exact Markdown table — same 3 columns, same header
+  row (`Ticket ID | PR Number/Link | Repository Name`), same header
+  separator row (`|---|---|---|`), same column order. Never substitute a
+  plain-text box, a bullet list, or any other layout for this table.
+- Never vary this format based on `--dry-run`, `--test-repo`, how many
+  tickets were processed (1 or 100+), or how many PRs a ticket has (1 or
+  many) — the exact same column set, bold-ticket-on-first-row convention,
+  and `↳` continuation marker apply unconditionally every single time.
+- Never invent extra columns (e.g. author, title, status) and never drop
+  one of the 3 required columns, regardless of what extra fields happen
+  to be present in `pr_list.yaml`.
+- Never re-sort, re-group, or re-label between runs in a way that would
+  make the same underlying `pr_list.yaml` data render differently if this
+  step were re-run — the table is a deterministic function of the merged
+  PR list (group by ticket in first-seen order, PRs sorted by number).
+
 ### Step 4.4 — Review results
+
+Print immediately after the Step 4.3a table above (same data, just summarized):
 
 ```
 ─────────────────────────────────────────────────────────────────

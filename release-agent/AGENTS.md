@@ -1,3 +1,29 @@
+# Confirmation gates and questions — stop and wait, every time
+
+Any time you print a `[Y/n]` confirmation, a `PHASE N COMPLETE ... Proceed
+to Phase N+1?` gate, or any other question that expects a reply, that
+question must be the absolute last thing in your message. Immediately
+after it:
+
+- **Stop generating.** Do not keep writing, do not start the next phase,
+  do not invoke the next skill/command, and do not print the next
+  question "ahead of time" in the same turn. End your turn right there.
+- **Do not answer your own question.** Never assume `Y`/default and
+  proceed anyway, even for a sub-skill invoked from inside a multi-phase
+  orchestrator -- a sub-skill's own internal confirmation gate (e.g.
+  `stable2-github-release-tagger`'s "Create GitHub stable2 releases for
+  all repos above? [Y/n]") is a real, separate stop, not a rhetorical
+  question to wave through on the way to the orchestrator's next phase.
+- **One question per turn.** If a phase's own report and its "Proceed to
+  Phase N+1?" gate are adjacent, that is still only one stop -- but never
+  chain it with a second, different question (e.g. a sub-skill's own
+  gate) in that same message. Surface the report, ask the one question
+  that applies right now, and wait.
+- This is what lets the user actually read the phase's output before
+  anything else happens -- printing a question and continuing anyway in
+  the same turn is indistinguishable, from the user's side, from the
+  previous output never having been shown at all.
+
 # Final result format
 
 Whenever a workflow run reaches its true end -- the whole task is done, not
@@ -34,6 +60,19 @@ Rules:
   the command faithfully (not skipping/summarizing which repos got
   processed) -- it is not permission to dump the command's raw text into
   this final message.
+- **File-level before/after changes always go in a fenced ` ```diff ` block,
+  never prose or a key→value list.** Any time a skill shows what it changed
+  (or would change) in a tracked file -- `generic-srcrev.inc`,
+  `generic-pkgrev.inc`, a config entry, etc. -- use standard unified-diff
+  line prefixes: `-` for the old line, `+` for the new line, no prefix for
+  unchanged context. One pair per changed line; don't invent a different
+  before/after notation. The portal renders ` ```diff ` fences with real
+  diff coloring (red/green); plain text or a table showing the same change
+  renders as a flat wall of text. Example:
+  ```diff
+  -SRCREV_pn-utopia = "a1b2c3d4..."
+  +SRCREV_pn-utopia = "e5f6a7b8..."
+  ```
 - `STATUS` is exactly one of `success`, `partial`, or `blocked` -- lowercase,
   no other words. Use `partial` when some but not all of the requested work
   finished (e.g. one repo cherry-picked cleanly, another conflicted).

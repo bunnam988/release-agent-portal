@@ -191,10 +191,13 @@ def load_ready_tickets(path):
     return ready
 
 
-def load_commits(pr_file, ready_tickets, narrow_repo=None):
+def load_commits(pr_file, ready_tickets, narrow_repo=None, github_org=None):
     """
     Load CommitEntry objects for READY tickets from pr_list.yaml.
     narrow_repo filters by org/repo slug or full URL.
+    github_org filters to repos under that exact GitHub org only (e.g. to
+    run core-nw and GDCS repos as two separate invocations under two
+    different gh identities -- see --github-org below).
     """
     with open(pr_file) as fh:
         data = yaml.safe_load(fh)
@@ -213,6 +216,8 @@ def load_commits(pr_file, ready_tickets, narrow_repo=None):
             norm = narrow_repo.rstrip("/").replace("https://github.com/", "")
             if norm != repo and norm not in repo:
                 continue
+        if github_org and repo.split("/", 1)[0].lower() != github_org.lower():
+            continue
         entries.append(CommitEntry(
             ticket=ticket,
             pr_number=int(pr.get("number", 0)),
@@ -474,6 +479,10 @@ def parse_args():
                    help="Apply locally but do not push")
     p.add_argument("--repo", default=None,
                    help="Narrow to one repo (org/repo or full GitHub URL)")
+    p.add_argument("--github-org", default=None,
+                   help="Narrow to repos under this exact GitHub org only "
+                        "(e.g. 'rdk-gdcs' vs 'rdkcentral') -- run this script "
+                        "once per org when orgs need different gh identities")
     p.add_argument("--commits", default=None,
                    help="Comma-separated SHA list; bypasses YAML (requires --repo)")
     return p.parse_args()
@@ -512,9 +521,11 @@ def main():
             sys.exit(0)
         print(f"READY tickets : {sorted(ready)}")
 
-        entries = load_commits(args.pr_list, ready, narrow_repo=args.repo)
+        entries = load_commits(args.pr_list, ready, narrow_repo=args.repo,
+                                github_org=args.github_org)
         if not entries:
             scope = f" for {args.repo}" if args.repo else ""
+            scope += f" (github-org={args.github_org})" if args.github_org else ""
             print(f"No matching commits found{scope}. Exiting.")
             sys.exit(0)
 

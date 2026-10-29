@@ -178,14 +178,17 @@ def should_exclude_key(key):
 
 def get_develop_prs(root_key):
     """
-    BFS traversal from root_key. Follows subtasks unconditionally.
-    Follows dependency links only when the linked ticket has NO subtasks
-    (i.e., it is not itself a user story).
+    BFS traversal from root_key. Follows subtasks and dependency links
+    unconditionally and collects PRs from every ticket reached (root, bug
+    or user story alike) -- same "walk everything, check everything" shape
+    as gerrit-cherrypick-squash's Gerrit-side traversal, so a dependency's
+    changes are never found on one side (Gerrit) but missed on the other
+    (GitHub) just because of that ticket's issue type.
 
     Returns:
         Sorted list of PR dicts (merged, develop branch only), deduplicated by URL.
     """
-    # visited: key -> (issue_id, how_reached, include_prs)
+    # visited: key -> (issue_id, how_reached)
     visited = {}
 
     root_id, root_subtasks, root_links, _ = get_issue_data(root_key)
@@ -193,23 +196,23 @@ def get_develop_prs(root_key):
         print(f"ERROR: Could not fetch root ticket {root_key}", file=sys.stderr)
         sys.exit(1)
 
-    visited[root_key] = (root_id, "root", True)
+    visited[root_key] = (root_id, "root")
     queue = []
 
     for nid, key, _ in root_subtasks:
         if key not in visited and not should_exclude_key(key):
-            visited[key] = (nid, f"subtask of {root_key}", None)
+            visited[key] = (nid, f"subtask of {root_key}")
             queue.append((nid, key, "subtask"))
 
     for nid, key, _, lt, direction in root_links:
         if key not in visited and not should_exclude_key(key):
-            visited[key] = (nid, f"{lt}/{direction} from {root_key}", None)
+            visited[key] = (nid, f"{lt}/{direction} from {root_key}")
             queue.append((nid, key, "link"))
 
     def fetch_data(item):
         nid, key, kind = item
         issue_id, subtasks, links, has_subtasks = get_issue_data(key)
-        return key, nid, kind, subtasks, links, has_subtasks
+        return key, nid, subtasks, links
 
     for depth in range(MAX_DEPTH):
         if not queue:
@@ -218,33 +221,19 @@ def get_develop_prs(root_key):
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
             futures = {ex.submit(fetch_data, item): item for item in queue}
             for f in as_completed(futures):
-                key, nid, kind, subtasks, links, has_subtasks = f.result()
-                old_id, old_how, _ = visited[key]
-
-                if kind == "link" and has_subtasks:
-                    visited[key] = (
-                        old_id,
-                        old_how + " [EXCLUDED: is user story]",
-                        False,
-                    )
-                    continue
-
-                visited[key] = (old_id, old_how, True)
+                key, nid, subtasks, links = f.result()
 
                 for snid, skey, _ in subtasks:
                     if skey not in visited and not should_exclude_key(skey):
-                        visited[skey] = (snid, f"subtask of {key}", None)
+                        visited[skey] = (snid, f"subtask of {key}")
                         next_queue.append((snid, skey, "subtask"))
 
                 for lnid, lkey, _, lt, direction in links:
                     if lkey not in visited and not should_exclude_key(lkey):
-                        visited[lkey] = (lnid, f"{lt}/{direction} from {key}", None)
+                        visited[lkey] = (lnid, f"{lt}/{direction} from {key}")
                         next_queue.append((lnid, lkey, "link"))
 
         queue = next_queue
-
-    # Collect PRs only from included tickets
-    active = {k: (nid, how) for k, (nid, how, include) in visited.items() if include}
 
     seen_urls = {}
 
@@ -252,7 +241,7 @@ def get_develop_prs(root_key):
         key, nid, how = item
         return key, how, get_prs(nid)
 
-    items = [(key, nid, how) for key, (nid, how) in active.items()]
+    items = [(key, nid, how) for key, (nid, how) in visited.items()]
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         futures = {ex.submit(fetch_prs_for, item): item for item in items}
         for f in as_completed(futures):

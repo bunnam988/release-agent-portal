@@ -56,27 +56,65 @@ This phase performs discovery + stable2 tracking label update:
   Jira IDs) is done directly via `gh`/`git` CLI commands and your own reasoning, not a
   separate `track_for_stable2.py` or similar. Do not assume one exists.
 
+## GitHub Identity — Per-Repo Org Switch
+
+Production-mode scope now spans two GitHub orgs: `rdkcentral` (core-nw, the
+default/already-authenticated identity) and `rdk-gdcs` (GDCS stable2
+components, `config/tracked_repos_gdcs_stable2.yaml`). Same constraint
+`on-demand-cherry-pick.md` already documents for its own per-repo switch —
+read that agent's "GitHub Identity — Per-Repo Org Switch" section for the
+full rationale; this skill follows the identical rules:
+
+- Mesh org name comes from `github_org` in `config/tracked_repos_gdcs_stable2.yaml`
+  (today: `rdk-gdcs`) — never hardcode it.
+- Before scanning the FIRST repo, record the default identity: `gh auth
+  status --hostname github.com`, note whichever account shows `Active
+  account: true` as `{default_gh_user}`.
+- Before any `git`/`gh` command against a specific repo: if that repo's
+  owner is the Mesh org, switch to `$GH_MESH_USER` (STOP if unset/empty —
+  do not guess), verify via `gh auth status` that it actually took effect,
+  then proceed. Otherwise ensure `{default_gh_user}` is active (switch back
+  if the previous repo processed was Mesh).
+- SSO gotcha: an `rdk-gdcs` lookup that 404s even with `GH_MESH_USER` active
+  means the token needs SSO authorization for `comcast-global`, not that the
+  repo/org doesn't exist — tell the user to authorize it, don't conclude
+  it's missing.
+- Always restore `{default_gh_user}` before this skill finishes (success,
+  failure, or early stop) — same "borrow and return" obligation.
+- Gerrit operations are unaffected by any of this (none in this skill).
+
 ## Modes
 
 ### Default mode (production scope)
-- Resolve repo scope from the pre-resolved, manually-maintained list:
-  - Read `/workspace/config/tracked_repos.yaml`
-  - Use the `repos[].url` entries directly as the scan scope — this file
-    was resolved once (clone meta-rdk-broadband, parse
-    `conf/include/generic-srcrev.inc`, resolve each component's GitHub
-    repo URL from recipe `SRC_URI`) and is kept up to date manually
-  - Do **not** clone `meta-rdk-broadband` or re-parse `generic-srcrev.inc`
-    in this skill — that discovery already happened once and its result
-    lives in `tracked_repos.yaml`
+- Resolve repo scope from the pre-resolved, manually-maintained lists:
+  - Read `/workspace/config/tracked_repos.yaml` (core-nw/rdkcentral, 41 repos)
+  - Read `/workspace/config/tracked_repos_gdcs_stable2.yaml` (GDCS/rdk-gdcs
+    stable2 components — distinct from `config/mesh_components.yaml`, which
+    belongs to the separate PR-based Mesh Components release pipeline and
+    is NOT part of this skill's scope)
+  - Use every `repos[].url` entry from BOTH files as the combined scan
+    scope — both files were resolved once (clone the matching meta-layer,
+    parse `conf/include/generic-srcrev.inc`, resolve each component's
+    GitHub repo URL from recipe `SRC_URI`) and are kept up to date manually
+  - Do **not** clone `meta-rdk-broadband`/`meta-rdk-comcast-broadband` or
+    re-parse `generic-srcrev.inc` in this skill — that discovery already
+    happened once and its result lives in these two files
   - If `tracked_repos.yaml` is missing, STOP and tell the user: "config/tracked_repos.yaml
     not found. This file must exist with the resolved repo scope — see
     specs/srcrev-parsing.md for how it was produced." Do NOT fall back to
     cloning meta-rdk-broadband automatically.
-  - If a repo is added to the meta-layer later, a human updates
-    `tracked_repos.yaml` directly (add the component under the right
-    `repos[].components` list, or a new `repos[]` entry) — this skill does
-    not attempt to detect or add new repos on its own.
+  - If `tracked_repos_gdcs_stable2.yaml` is missing, warn the user and
+    continue with core-nw-only scope (do NOT stop the whole skill over it —
+    GDCS scope is an addition, not a hard requirement for core-nw tracking
+    to keep working).
+  - If a repo is added to either meta-layer later, a human updates the
+    matching file directly — this skill does not attempt to detect or add
+    new repos on its own.
+  - Print the combined scope before continuing, split by org:
+    `Scanning {N} core-nw repos (rdkcentral) + {M} GDCS repos (rdk-gdcs)`
 - This is the mode used when `--test-repo` is NOT provided.
+- `--test-repo` stays core-nw-only (the existing 6-repo allowlist below) —
+  GDCS repos are never included in test-repo mode.
 
 ### Test-repo mode
 If user passes `--test-repo`, restrict scope to this allowlist only:
@@ -202,20 +240,26 @@ If no semver tag exists:
 1. Parse flags and detect mode.
 2. Build final repo list:
   - Production mode:
-    1. Read `/workspace/config/tracked_repos.yaml`
-    2. Use every `repos[].url` entry as the scan scope
-    3. This file is a static, manually-maintained resolution of
-       `generic-srcrev.inc` (see the file's own header and
-       `specs/srcrev-parsing.md` for how it was originally produced) — do
-       NOT clone `meta-rdk-broadband` or re-parse `generic-srcrev.inc` in
+    1. Read `/workspace/config/tracked_repos.yaml` and
+       `/workspace/config/tracked_repos_gdcs_stable2.yaml`
+    2. Use every `repos[].url` entry from both files as the scan scope,
+       tagging each with its org (`rdkcentral` vs `rdk-gdcs`) for the
+       identity-switch rule above
+    3. Both files are static, manually-maintained resolutions of a
+       `generic-srcrev.inc` (see each file's own header and
+       `specs/srcrev-parsing.md` for how core-nw's was originally produced)
+       — do NOT clone either meta-layer or re-parse `generic-srcrev.inc` in
        this skill; that work is already done and cached there
-   - Test mode: allowlist (all or one URL).
+   - Test mode: allowlist (all or one URL), core-nw only — never includes
+     GDCS repos.
 3. Print selected repos and ask confirmation.
 
 Production mode failure handling:
 - If `/workspace/config/tracked_repos.yaml` is missing or has no `repos` entries,
   STOP and tell the user exactly that — do NOT fall back to cloning
   meta-rdk-broadband or to a guessed repo list.
+- If `/workspace/config/tracked_repos_gdcs_stable2.yaml` is missing or has no
+  `repos` entries, warn and continue with core-nw-only scope (not a hard stop).
 - Do NOT prompt for password interactively — this mode does not need
   Gerrit credentials at all now, since there is no meta-layer clone here.
 
@@ -226,6 +270,8 @@ Production mode failure handling:
 
 ## Step 3 — Fetch New Merged Commits on Develop
 For each repo:
+0. Apply the GitHub Identity switch above for this repo's org before any
+   `git`/`gh` command below.
 1. Resolve baseline marker:
   - First-run: latest created component tag commit SHA.
    - Incremental: `last_processed_commit_sha`.

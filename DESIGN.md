@@ -706,6 +706,37 @@ been exercised against them yet. Treat as reviewed-but-unverified until
 that credential is in place and a real dry-run has been watched end to
 end.
 
+### GDCS (rdk-gdcs) components in the FULL stable2 pipeline
+
+A third, distinct repo set from the two above: 6 components
+(`sysint-cpc`, `rdkb-common-utils`, `firewall-src`, `cujo-ni`,
+`cujo-fpingdq`, `apparmor_profiles`) that DO follow the same
+cherry-pick/stable2 release model as the 41 core-nw repos -- unlike
+"Mesh Components" above, which uses a completely separate PR-based
+process. Tracked in `config/tracked_repos_gdcs_stable2.yaml` (parallel to
+`config/tracked_repos.yaml`), resolved from `meta-rdk-comcast-broadband`'s
+`generic-srcrev.inc` instead of `meta-rdk-broadband`'s. `cujo-ni` and
+`cujo-fpingdq` are two recipes for the one shared repo
+(`rdk-gdcs/cujo-qoo-module`).
+
+Key asymmetry: most of these 6 components are SRCREV-only -- cherry-pick
++ SRCREV update, no GitHub tag/release, no PKGREV entry. Only the repos
+marked `tag_eligible: true` in that file (today: the `cujo-ni`/
+`cujo-fpingdq` repo) get the full core-nw-style tag + PKGREV + SRCREV
+treatment. This reuses the same GitHub-identity-switch mechanism
+documented above (`GH_MESH_USER`), now applied across the whole stable2
+pipeline (`track-for-stable2`'s repo scan, `jira-pr-lookup`'s `gh pr
+view` merge-commit-SHA enrichment, `stable2-github-release-tagger`,
+`stable2-srcrev-updater`'s `resolve_srcrev.py`), not just
+`on-demand-cherry-pick`. `gerrit-cherrypick-squash` gained a parallel
+Step 5h (alongside the existing Step 5g for meta-rdk-broadband) that
+pushes a SEPARATE Gerrit change to `meta-rdk-comcast-broadband` under the
+same shared topic -- never squashed into the same commit as the core-nw
+meta-layer change, since they're different Gerrit projects.
+`cherry_pick_to_stable2.py` gained a `--github-org` filter so
+`stable2-meta-sync-orchestrator`'s Phase 1 can run it once per org/identity
+instead of mixing both in one process-wide `gh` identity.
+
 ### CNAP `WebService` schema — confirmed directly, not guessed
 
 Read `cnap.comcast.net/cnap`'s own docs (Microservices Journey -> Advanced

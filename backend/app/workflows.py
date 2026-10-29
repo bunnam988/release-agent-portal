@@ -390,7 +390,12 @@ CATALOG: list[Workflow] = [
                 kind="text",
                 required=True,
             ),
-            WorkflowArg(name="topic", flag="--topic", label="Gerrit topic", kind="text", required=True),
+            WorkflowArg(
+                name="topic",
+                flag="--topic",
+                label="Gerrit topic (optional — auto-derived as ticket(s)_branch if blank)",
+                kind="text",
+            ),
             _DRY_RUN,
         ],
         mutating=True,
@@ -401,7 +406,7 @@ CATALOG: list[Workflow] = [
             "Resolves each repo's GitHub branch automatically from the Gerrit branch you name (via its tag in meta-rdk-broadband's pkgrev.inc).",
             "Finds and cherry-picks each ticket's merged PR(s) onto that resolved branch.",
             "Computes a new hotfix tag per repo and updates SRCREV/PKGREV to match.",
-            "Syncs any linked Gerrit changes under the Gerrit topic you specify.",
+            "Syncs any linked Gerrit changes under the Gerrit topic you specify (or an auto-derived one if left blank).",
         ],
     ),
     # ---- Mesh Components (rdk-gdcs org) -- a separate release process from

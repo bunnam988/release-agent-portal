@@ -15,7 +15,7 @@ import {
   Terminal,
   XCircle,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -73,6 +73,13 @@ const PHASE_LABELS: Record<string, string[]> = {
     'Considered labeling',
     'GitHub tagging',
     'SRCREV prep',
+    'Gerrit cherry-pick',
+  ],
+  'on-demand-cherry-pick': [
+    'Find PRs',
+    'GitHub cherry-pick',
+    'Tag + release',
+    'SRCREV/PKGREV',
     'Gerrit cherry-pick',
   ],
 }
@@ -279,6 +286,45 @@ function ResultTableView({ table }: { table: ResultTable }) {
     </div>
   )
 }
+
+// Renders a ```diff fenced block (AGENTS.md instructs every skill to show
+// file-level before/after changes -- SRCREV/PKGREV lines, config edits --
+// this way instead of as prose) with GitHub-style per-line coloring,
+// instead of react-markdown's default plain `<pre><code>` dump. One line
+// per div so added/removed/hunk/file-header lines can each get their own
+// class; a blank line still needs a visible height so it doesn't collapse.
+function DiffBlock({ text }: { text: string }) {
+  const lines = text.replace(/\n$/, '').split('\n')
+  return (
+    <pre className="diff-block">
+      {lines.map((line, i) => {
+        let kind = 'context'
+        if (/^(\+\+\+|---)\s/.test(line) || /^(\+\+\+|---)$/.test(line)) kind = 'file'
+        else if (/^@@.*@@/.test(line)) kind = 'hunk'
+        else if (line.startsWith('+')) kind = 'add'
+        else if (line.startsWith('-')) kind = 'remove'
+        return (
+          <div className={`diff-line diff-line-${kind}`} key={i}>
+            <span className="diff-line-text">{line || '\u00A0'}</span>
+          </div>
+        )
+      })}
+    </pre>
+  )
+}
+
+// Passed as react-markdown's `code` component override everywhere we
+// render assistant prose, so a ` ```diff ` fence renders as DiffBlock
+// instead of plain monospace text -- every other language/plain inline
+// code keeps react-markdown's normal rendering untouched.
+function MarkdownCode({ className, children }: { className?: string; children?: ReactNode }) {
+  if (className?.includes('language-diff')) {
+    return <DiffBlock text={String(children)} />
+  }
+  return <code className={className}>{children}</code>
+}
+
+const markdownComponents = { code: MarkdownCode }
 
 // A single tool call's command + real output, collapsed by default (long
 // command output would otherwise dominate the log) -- click to expand.
@@ -1092,6 +1138,24 @@ export default function SessionView() {
     introBanner && pendingPrompt && introBanner.body.endsWith(pendingPrompt)
       ? introBanner.body.slice(0, introBanner.body.length - pendingPrompt.length).trim()
       : (introBanner?.body ?? '')
+  // Per-phase continuation messages (no startup banner, just "PHASE N
+  // COMPLETE" + fields + a Y/n gate) used to collapse down to a bare
+  // "Phase complete, see summary above" placeholder -- silently dropping
+  // any prose that didn't fit parsePhaseReports' strict "key: value"
+  // shape (extra context, warnings, lists, etc). Strip only what's
+  // already rendered elsewhere (the structured report block, box
+  // banners, the trailing prompt) and keep showing whatever's left so
+  // nothing the agent actually said disappears from view.
+  const currentBody =
+    !resultBlock && !finalSummary && !introBanner
+      ? (() => {
+          let body = stripTrailingFence(extractBoxBanners(stripReportingNoise(finalText)).stripped)
+          if (pendingPrompt && body.endsWith(pendingPrompt)) {
+            body = body.slice(0, body.length - pendingPrompt.length).trim()
+          }
+          return body
+        })()
+      : ''
 
   const phaseLabels = workflow ? PHASE_LABELS[workflow.id] : undefined
   const completedPhases = phaseLabels ? countCompletedPhases(partOrder, parts) : 0
@@ -1217,7 +1281,7 @@ export default function SessionView() {
           <div className="result-structured">
             {cleanedBefore && (
               <div className="result-text result-text-before">
-                <ReactMarkdown>{cleanedBefore}</ReactMarkdown>
+                <ReactMarkdown components={markdownComponents}>{cleanedBefore}</ReactMarkdown>
               </div>
             )}
             {(() => {
@@ -1271,7 +1335,12 @@ export default function SessionView() {
             {introBanner && <IntroBannerCard banner={introBanner} />}
             {introBannerBody && (
               <div className="result-text">
-                <ReactMarkdown>{introBannerBody}</ReactMarkdown>
+                <ReactMarkdown components={markdownComponents}>{introBannerBody}</ReactMarkdown>
+              </div>
+            )}
+            {!introBanner && currentBody && (
+              <div className="result-text">
+                <ReactMarkdown components={markdownComponents}>{currentBody}</ReactMarkdown>
               </div>
             )}
             {upcomingPhase ? (
@@ -1288,7 +1357,7 @@ export default function SessionView() {
         ) : (
           <div className="result-text">
             {finalText ? (
-              <ReactMarkdown>{extractBoxBanners(finalText).stripped}</ReactMarkdown>
+              <ReactMarkdown components={markdownComponents}>{extractBoxBanners(finalText).stripped}</ReactMarkdown>
             ) : busy ? (
               <span className="typing-indicator">
                 Working <span /> <span /> <span />

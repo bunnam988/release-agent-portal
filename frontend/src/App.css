@@ -1962,6 +1962,58 @@ button:disabled {
   background: #0093d11a;
 }
 
+/* ```diff fenced blocks (SRCREV/PKGREV and other file-change previews --
+   see AGENTS.md) -- GitHub-style per-line coloring instead of a plain
+   gray wall of text, so a file edit reads at a glance instead of being
+   mistaken for an activity-log dump. */
+.diff-block {
+  margin: 10px 0;
+  padding: 2px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+  overflow-x: auto;
+  font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  box-shadow: var(--shadow-card);
+}
+
+.diff-line {
+  display: block;
+  padding: 0 14px;
+  white-space: pre;
+}
+
+.diff-line-text {
+  display: inline-block;
+}
+
+.diff-line-add {
+  background: #16a34a22;
+  color: #4ade80;
+}
+
+.diff-line-remove {
+  background: #dc262622;
+  color: #f87171;
+}
+
+.diff-line-hunk {
+  background: #0093d11a;
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.diff-line-file {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.diff-line-context {
+  color: var(--text-muted);
+}
+
 .typing-indicator {
   display: inline-flex;
   align-items: center;

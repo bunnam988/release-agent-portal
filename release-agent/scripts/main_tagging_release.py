@@ -75,10 +75,20 @@ SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _run(cmd, cwd=None, env=None):
-    """Run a command, returning (returncode, stdout, stderr)."""
-    result = subprocess.run(
-        cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-    )
+    """Run a command, returning (returncode, stdout, stderr).
+
+    Never raises -- a missing binary (FileNotFoundError, e.g. `git-flow`
+    not on PATH in some container rebuild) or any other OS-level failure
+    to even launch the process is turned into a non-zero returncode with
+    the exception message as stderr, same shape every caller already
+    checks for a command that ran and failed.
+    """
+    try:
+        result = subprocess.run(
+            cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+    except OSError as exc:
+        return 1, "", f"{cmd[0]}: {exc}"
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
@@ -275,38 +285,49 @@ def compute_next_version(latest_tag, tag_date_str):
 def build_plan(owner_repo_urls):
     plans = []
     for url in owner_repo_urls:
-        owner, repo = owner_repo_from_url(url)
-        slug = f"{owner}/{repo}"
-        print(f"  Checking {slug}…", end=" ", flush=True)
-
-        tag, tag_date, err = latest_semver_tag(owner, repo)
-        if err:
-            print(f"ERROR ({err})")
-            plans.append(RepoPlan(slug, None, None, 0, 0, "", False, error=err))
-            continue
-
-        if tag is None:
-            # No semver tag at all: default to 1.0.0, always needs tagging.
-            plans.append(RepoPlan(slug, None, None, 0, 0, "1.0.0", True))
-            print("no existing tag -> 1.0.0")
-            continue
-
-        real_ahead, raw_ahead, err = commits_ahead_of_tag(owner, repo, tag)
-        if err:
-            print(f"ERROR ({err})")
-            plans.append(RepoPlan(slug, tag, tag_date, 0, 0, "", False, error=err))
-            continue
-
-        needs = (real_ahead or 0) > 0
-        new_version = compute_next_version(tag, tag_date) if needs else tag
-        plans.append(RepoPlan(slug, tag, tag_date, real_ahead or 0, raw_ahead or 0, new_version, needs))
-        noise = (raw_ahead or 0) - (real_ahead or 0)
-        noise_note = f", {noise} release-bookkeeping" if noise else ""
-        print(
-            f"{tag} (+{real_ahead or 0} real{noise_note} on develop)"
-            + (f" -> {new_version}" if needs else " up to date")
-        )
+        try:
+            plans.append(_plan_one_repo(url))
+        except Exception as exc:
+            # Same reasoning as the release loop's try/except below: one
+            # repo's unexpected failure (malformed API response, a
+            # transient network error not already turned into a clean
+            # gh_json err, a bad tracked_repos.yaml URL, etc.) must not
+            # crash discovery for the other 42 repos still queued.
+            print(f"ERROR (unexpected: {exc})")
+            plans.append(RepoPlan(url, None, None, 0, 0, "", False, error=f"unexpected error: {exc}"))
     return plans
+
+
+def _plan_one_repo(url):
+    owner, repo = owner_repo_from_url(url)
+    slug = f"{owner}/{repo}"
+    print(f"  Checking {slug}…", end=" ", flush=True)
+
+    tag, tag_date, err = latest_semver_tag(owner, repo)
+    if err:
+        print(f"ERROR ({err})")
+        return RepoPlan(slug, None, None, 0, 0, "", False, error=err)
+
+    if tag is None:
+        # No semver tag at all: default to 1.0.0, always needs tagging.
+        print("no existing tag -> 1.0.0")
+        return RepoPlan(slug, None, None, 0, 0, "1.0.0", True)
+
+    real_ahead, raw_ahead, err = commits_ahead_of_tag(owner, repo, tag)
+    if err:
+        print(f"ERROR ({err})")
+        return RepoPlan(slug, tag, tag_date, 0, 0, "", False, error=err)
+
+    needs = (real_ahead or 0) > 0
+    new_version = compute_next_version(tag, tag_date) if needs else tag
+    noise = (raw_ahead or 0) - (real_ahead or 0)
+    noise_note = f", {noise} release-bookkeeping" if noise else ""
+    print(
+        f"{tag} (+{real_ahead or 0} real{noise_note} on develop)"
+        + (f" -> {new_version}" if needs else " up to date")
+    )
+    return RepoPlan(slug, tag, tag_date, real_ahead or 0, raw_ahead or 0, new_version, needs)
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -563,7 +584,19 @@ def main():
         sys.exit(0)
 
     if not args.dry_run and not args.yes:
-        answer = input(f"Release {len(needs)} repo(s) listed above? [y/N] ").strip().lower()
+        # No real terminal is attached when this runs as an agent-driven
+        # subprocess -- input() then hits immediate EOF and raises
+        # EOFError, which used to crash the whole run with a raw
+        # traceback instead of a clear, actionable message.
+        try:
+            answer = input(f"Release {len(needs)} repo(s) listed above? [y/N] ").strip().lower()
+        except EOFError:
+            print(
+                "ERROR: No interactive terminal available to confirm. Re-run with "
+                "--yes after you've already shown the plan above and gotten the "
+                "user's approval (e.g. via a prior --dry-run run)."
+            )
+            sys.exit(1)
         if answer != "y":
             print("Aborted by user. No changes made.")
             sys.exit(0)
@@ -573,7 +606,14 @@ def main():
     for p in needs:
         owner, repo = p.owner_repo.split("/")
         print(f"\n▸ Releasing {p.owner_repo} @ {p.new_version}")
-        results.append(release_repo(owner, repo, p.new_version, args.work_dir, args.dry_run))
+        # One repo's unexpected failure (network blip, stale clone dir
+        # permissions, etc. -- anything not already turned into a clean
+        # rc != 0 check above) must not abort every other repo still
+        # queued in this batch -- record it and keep going.
+        try:
+            results.append(release_repo(owner, repo, p.new_version, args.work_dir, args.dry_run))
+        except Exception as exc:
+            results.append(RepoResult(owner_repo=p.owner_repo, version=p.new_version, error=f"unexpected error: {exc}"))
 
     print_report(results, args.dry_run)
     sys.exit(0 if all(r.succeeded for r in results) else 1)

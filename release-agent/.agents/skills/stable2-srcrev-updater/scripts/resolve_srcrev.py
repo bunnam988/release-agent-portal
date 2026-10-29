@@ -63,6 +63,27 @@ DEFAULT_REPOS: Dict[str, str] = {
     "SRCREV_ccsp-dhcp-mgr": "https://github.com/rdkcentral/dhcp-manager.git",
 }
 
+# GDCS (rdk-gdcs org) stable2 components -- separate meta-layer
+# (meta-rdk-comcast-broadband), separate GitHub identity (GH_MESH_USER).
+# Var names kept exactly as they appear in meta-rdk-comcast-broadband's
+# generic-srcrev.inc (not normalized to the underscore convention used
+# above for rdkcentral vars). See config/tracked_repos_gdcs_stable2.yaml
+# for the source of truth this was copied from -- update both together.
+GDCS_REPOS: Dict[str, str] = {
+    "SRCREV_sysint-cpc": "https://github.com/rdk-gdcs/sysinit-broadband-cpc.git",
+    "SRCREV_rdkb-common-utils": "https://github.com/rdk-gdcs/rdkb_common_utils.git",
+    "SRCREV_firewall-src": "https://github.com/rdk-gdcs/firewall.git",
+    "SRCREV_cujo-ni": "https://github.com/rdk-gdcs/cujo-qoo-module.git",
+    "SRCREV_cujo-fpingdq": "https://github.com/rdk-gdcs/cujo-qoo-module.git",
+    "SRCREV_apparmor_profiles": "https://github.com/rdk-gdcs/apparmor-profiles.git",
+}
+
+# Combined lookup used everywhere below -- a repo scope entry can come from
+# either org, resolved the same way via git ls-remote (identity/auth for
+# private rdk-gdcs repos is handled by the invoking skill switching `gh`'s
+# active account before running this script, not by this script itself).
+ALL_REPOS: Dict[str, str] = {**DEFAULT_REPOS, **GDCS_REPOS}
+
 
 def which_git() -> str:
     path = shutil.which("git")
@@ -129,7 +150,7 @@ def component_from_var(var_name: str) -> str:
 
 def format_as_yocto(mapping: Dict[str, str]) -> str:
     lines: List[str] = []
-    for var in DEFAULT_REPOS.keys():
+    for var in ALL_REPOS.keys():
         if var in mapping:
             lines.append(f'{var} = "{mapping[var]}"')
     return "\n".join(lines) + ("\n" if lines else "")
@@ -148,12 +169,12 @@ def main() -> None:
     selected: Dict[str, str] = {}
     missing_scope: List[str] = []
     for normalized in sorted(requested):
-        matches = [(var, url) for var, url in DEFAULT_REPOS.items() if normalize_repo(url) == normalized]
+        matches = [(var, url) for var, url in ALL_REPOS.items() if normalize_repo(url) == normalized]
         if not matches:
             requested_base = repo_basename(normalized)
             matches = [
                 (var, url)
-                for var, url in DEFAULT_REPOS.items()
+                for var, url in ALL_REPOS.items()
                 if repo_basename(url) == requested_base
             ]
         if not matches:
