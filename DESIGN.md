@@ -426,10 +426,31 @@ tool:
 | Path (inside the single container) | Contents | Persistence need |
 | --- | --- | --- |
 | `/workspace` (= the `release-agent` submodule) | skill/agent markdown, scripts, config | baked into the image; redeployed on release |
-| `/workspace/*.yaml`, `*_state.yaml`, `last_run.txt` | incremental run state (e.g. `track_for_stable2_state.yaml` bootstraps from latest tag, then only diffs) | **must** survive restarts — mount a CNAP-provided PVC over these paths |
-| `/workspace/.stable2-meta-sync/meta-rdk-broadband` | git worktree used for `.inc` file prep | same PVC |
+| `/workspace/*.yaml`, `*_state.yaml`, `last_run.txt` (now symlinked by `docker-entrypoint.sh` into `/workspace/.run-state`) | incremental run state (e.g. `track_for_stable2_state.yaml` bootstraps from latest tag, then only diffs) | **must** survive restarts — mount a CNAP-provided PVC over `/workspace/.run-state` |
+| `/workspace/.stable2-meta-sync/meta-rdk-broadband` | git worktree used for `.inc` file prep | same PVC (or a second one at `/workspace/.stable2-meta-sync`) |
 | `~/.netrc`, `ccp_jira.env`, GitHub token | credentials | CNAP secrets, mounted read-only, never baked into the image or committed |
-| `~/.local/share/opencode/auth.json` | GitHub Copilot OAuth token | CNAP secret or one-time login against the deployed container — read-write, see "model provider auth" blocker |
+| `~/.local/share/opencode/auth.json`, and now also the rest of `~/.local/share/opencode/` (opencode's own `opencode.db` session-history SQLite file, confirmed by inspecting a real running container) | GitHub Copilot OAuth token + every session's full chat/tool-call history (what the portal's History page reads) | CNAP secret/PVC or one-time login against the deployed container — read-write, see "model provider auth" blocker |
+
+**IMPORTANT, found during a real crash/data-loss investigation (this
+session):** the `docker-compose.yml` fixes for local dev --
+`release-agent-run-state` and `release-agent-state` as named Docker
+volumes, `opencode-auth` covering opencode's session-history DB -- are
+Docker Compose constructs only. CNAP reads `cnap-webservice.yaml`, not
+`docker-compose.yml`, and that manifest still has **no PVC/volume
+mount at all** (see "Open items" below, already flagged before this
+session as unresolved for `.stable2-meta-sync` specifically -- now
+confirmed to also apply to `.run-state` and to opencode's own session
+DB). Without an equivalent PVC wired into `cnap-webservice.yaml`, every
+pod restart in the real CNAP deployment wipes all of this -- run state
+AND every session's history -- exactly the symptom this session's audit
+was trying to fix, just not yet closed out on the k8s side. This is the
+single most important follow-up before trusting this in production.
+
+The `docker-entrypoint.sh` per-process supervisor (restart-with-backoff
+instead of tearing down the whole container on one crash) and the
+main-tagging/cherry-pick clone-cleanup fixes are both plain, orchestrator-
+agnostic behavior baked into the image itself -- these apply identically
+in CNAP with no further action needed.
 
 Jira no longer needs an entry here — it moved off the Flow OAuth
 (`mcp-auth.json`) path entirely, onto `ccp_jira.env`'s plain service-account
@@ -543,6 +564,20 @@ Rollout order:
 | GitHub | **Interim: personal** | `gh auth login` done once against the deployed container (token in the `gh-auth` volume). Real PRs/releases are created as this person, not a bot. |
 | Gerrit | **Interim: personal** | HTTPS credential in a mounted `.netrc`. Real pushes/cherry-picks are authenticated as this person. |
 | Model provider | **Real service account, done** | Swapped from personal GitHub Copilot OAuth to a dedicated Flow LLM gateway (`orgs/rdkb-release-agent/modelgws/rdkb-middleware-release-agent`), authenticated via SAT client-credentials (`RDKB_SAT_CLIENT_ID`/`RDKB_SAT_CLIENT_SECRET`), not a person's own login. See "Model provider: Flow gateway with 24h token refresh" below for the full mechanism. |
+
+**Delivery mechanism (how these actually reach the running container,
+separate from whose credential each one is):** Comcast xVault, via
+`cnap-webservice.yaml`'s `serviceClaims` -- confirmed against CNAP's real
+docs, not the earlier plain-`Secret` attempt that hit
+`APPLICATION_INVALID_SECRET_REF` (see `cnap-secret.yaml.template`'s
+header for why that specific attempt failed). Baking credentials into
+the image (`deploy-credentials/`) is now a local-dev-only fallback, not
+the production mechanism -- see that directory's own README for the full
+priority order. Still requires the CNAP platform team to actually enable
+xVault service binding for this namespace and the real secret values to
+be populated in the xVault UI before this is live -- neither of those are
+code changes, see `cnap-webservice.yaml`'s serviceClaims comment for the
+exact steps.
 
 ### Swapping to service accounts later (no code changes needed)
 
@@ -776,18 +811,54 @@ end-to-end, the decision was made to bake credentials into the image
 instead (see `deploy-credentials/README.md`) -- a real, accepted
 security trade-off (worse than `serviceClaims`, better than committing to
 git), prioritizing getting a working deployment over the more secure
-mechanism for now. `cnap-secret.yaml.template` and the `serviceClaims`
-approach remain in git history and as an unused template, to revert to
-once there's time/support to get the `servicebinding.io` mount path
-question answered definitively (e.g. via CNAP's own Slack support
-channel, referenced in that AI diagnosis's remediation text).
+mechanism for now.
+
+**Superseded (this session):** switched to Comcast xVault,
+confirmed against CNAP's real docs this time (cnap.comcast.net/cnap ->
+Microservices Journey -> Advanced Topics -> Bind Vault Secret) rather
+than inferred/guessed. This is a different mechanism from the
+`secretKeyRef`-based one that failed above -- xVault's `serviceClaims`
+bind a Vault *path*, not a Kubernetes `Secret` object, sidestepping the
+specific `secretKeyRef.name`/intermediate-bind-secret issue that caused
+`APPLICATION_INVALID_SECRET_REF` before. See `cnap-webservice.yaml`'s
+`serviceClaims` block (now the real mechanism) and
+`deploy-credentials/README.md` (now a local-dev-only fallback).
+`cnap-secret.yaml.template` remains in git history purely as a record of
+why the earlier attempt failed, not something to revert to.
 
 ### Open items still outside code (CNAP/infra-owner's call, not mine)
 
-- **Persistent storage for `WebService` specifically** -- no dedicated
-  PVC/volume concept was found in the docs read so far. `/workspace/.stable2-meta-sync`
-  needs to survive pod restarts (see "Data Storage" below); this needs a
-  direct answer, not an assumption that ephemeral storage is fine.
+- **Persistent storage for `WebService` specifically -- accepted risk,
+  deploying anyway (this session's explicit decision).** Checked CNAP's
+  docs specifically: "Data Services" under Advanced Topics is a managed-
+  database binding (get credentials, delete), not a raw filesystem
+  volume for a `WebService` -- no PVC/volume-mount mechanism was found
+  there at all. Three paths need this, all confirmed by a real
+  crash/data-loss investigation this session: `/workspace/.run-state`
+  (last_run.txt and every stable2_*/pr_list.yaml/
+  track_for_stable2_state.yaml intermediate file -- previously not
+  persisted *anywhere*, not even locally, until this session's fix),
+  `/workspace/.stable2-meta-sync` (already flagged), and
+  `~/.local/share/opencode` (opencode's own session-history SQLite DB --
+  without this, every pod restart also wipes the portal's entire History
+  page, not just in-progress skill state). Every pod restart in the real
+  deployment wipes all of it until this is resolved -- see "Data Storage"
+  above for the full detail and why the local `docker-compose.yml` fix
+  for this does NOT by itself fix it for the real CNAP deployment.
+- **Resource limits for the pod -- done (this session).**
+  `cnap-webservice.yaml` now sets `resources.limits`/`requests` (1 CPU /
+  3Gi limit, 0.5 CPU / 768Mi request), confirmed against CNAP's real
+  Resources doc, mirroring `docker-compose.yml`'s local safety net.
+  Revisit the actual numbers once a real "all components" run has been
+  tried against the deployed pod.
+- **xVault onboarding -- not something I can do from here.** The
+  `serviceClaims` block in `cnap-webservice.yaml` needs: (1) the CNAP
+  team to enable xVault service binding for the `corenw-att` namespace
+  and confirm the real xVault namespace (the `<XVAULT-NAMESPACE>`
+  placeholders in that file are not real values), and (2) the actual
+  secret values populated at those paths in the xVault UI
+  (portal.xvault.comcast.com) -- CNAP only reads from there, never
+  creates or edits secret content itself.
 - Whoever handles the actual deployment target (namespace -- confirmed as
   `corenw-att` -- ingress/TLS, egress allowlist to `gerrit.teamccp.com`,
   `github.com`) — explicitly not something I'm tracking further beyond

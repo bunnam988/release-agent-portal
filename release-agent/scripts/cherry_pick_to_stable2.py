@@ -559,6 +559,15 @@ def main():
             no_push=args.no_push,
         )
         results.append(result)
+        if not args.no_push:
+            # --no-push deliberately leaves the clone in place (the
+            # printed "local commits ready in <clone_path>" message
+            # above depends on it still existing) -- otherwise, each
+            # repo's clone is only needed for its own cherry-pick/push
+            # above and would otherwise accumulate unbounded across a
+            # run touching many repos.
+            repo_slug_dir = clone_url.rstrip("/").split("/")[-1].replace(".git", "")
+            shutil.rmtree(os.path.join(args.work_dir, repo_slug_dir), ignore_errors=True)
 
     ok = print_report(results, args.dry_run, args.branch)
     sys.exit(0 if ok else 1)

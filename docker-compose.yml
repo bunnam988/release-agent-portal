@@ -1,3 +1,12 @@
+# Pinned so the named volumes below (session history, auth, run-state)
+# always resolve to the same volumes regardless of what folder name this
+# repo gets cloned into -- Compose otherwise derives the project name
+# (and therefore every volume's real name) from the containing
+# directory, so a teammate cloning into e.g. "release-agent-portal-2"
+# would silently get brand-new, empty volumes and a blank history/login
+# state instead of the ones already in use.
+name: release-agent-portal
+
 services:
   app:
     build:
@@ -127,6 +136,20 @@ services:
       # in the image) and never committed to the submodule either, so it
       # needs this explicit mount. Read-only: skills only read it.
       - ./release-agent/ccp_jira.env:/workspace/ccp_jira.env:ro
+      # Persists the top-level state files several skills read/write
+      # directly in /workspace's project root (last_run.txt,
+      # track_for_stable2_state.yaml, stable2_candidates.yaml,
+      # stable2_status_analysis.yaml, pr_list.yaml,
+      # stable2_release_tags.yaml -- see main-tagging/track-for-stable2/
+      # jira-pr-lookup/etc. SKILL.md files). Confirmed the hard way:
+      # unlike .stable2-meta-sync above, these were never actually on a
+      # named volume, so a container recreation (image rebuild, or the
+      # entrypoint's own crash-loop giveup below) silently wiped an
+      # in-progress multi-component run's whole history. docker-
+      # entrypoint.sh symlinks each known filename in /workspace into
+      # this volume at startup so every skill's existing hardcoded path
+      # keeps working with zero changes to the skills themselves.
+      - release-agent-run-state:/workspace/.run-state
     ports:
       - "8000:8000"
     # Matches the HEALTHCHECK already baked into the Dockerfile -- kept
@@ -140,8 +163,20 @@ services:
       start_period: 30s
       retries: 5
     restart: unless-stopped
+    # Explicit ceiling so a heavy "all components" run hits a predictable,
+    # logged OOM-kill of just this container's cgroup -- which
+    # docker-entrypoint.sh's per-process supervisor can usually recover
+    # from in place (see that file) -- instead of the Docker Desktop VM's
+    # own OOM killer picking an arbitrary process on the whole host once
+    # its total RAM is exhausted. Confirmed via `docker stats`/`free -h`
+    # against a real run: this VM only has ~3.8GB total and nothing was
+    # capped here before. Raise this (and Docker Desktop's own VM memory
+    # allocation in Settings -> Resources) if heavy runs still hit it.
+    mem_limit: 3g
+    mem_reservation: 768m
 
 volumes:
   release-agent-state:
+  release-agent-run-state:
   opencode-auth:
   gh-auth:

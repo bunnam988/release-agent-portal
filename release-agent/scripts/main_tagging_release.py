@@ -614,6 +614,15 @@ def main():
             results.append(release_repo(owner, repo, p.new_version, args.work_dir, args.dry_run))
         except Exception as exc:
             results.append(RepoResult(owner_repo=p.owner_repo, version=p.new_version, error=f"unexpected error: {exc}"))
+        finally:
+            # Each repo's full clone is only needed for the duration of
+            # its own release steps above -- left in place otherwise,
+            # these accumulate unbounded across a big "all components"
+            # batch (confirmed in practice: dozens of full clones left
+            # on disk after a real run, on a container with no other
+            # cleanup for them). Already pushed/published by this point
+            # either way, so nothing is lost by removing it now.
+            shutil.rmtree(os.path.join(args.work_dir, repo), ignore_errors=True)
 
     print_report(results, args.dry_run)
     sys.exit(0 if all(r.succeeded for r in results) else 1)

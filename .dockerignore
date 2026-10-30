@@ -7,6 +7,16 @@ backend/app/__pycache__
 .DS_Store
 ._*
 .vscode
+
+# deploy-credentials/ is a local-dev-only fallback (see its README.md);
+# production now gets everything from xVault. Explicitly excluded here
+# too (defense in depth) so a real credential file dropped in that
+# directory for local testing can never get baked into a pushed image,
+# even if someone forgets to scrub it back to a placeholder first.
+deploy-credentials/*.env
+deploy-credentials/*.netrc
+deploy-credentials/*.yml
+deploy-credentials/*.json
 release-agent/.git
 
 # release-agent's own .dockerignore (credential/state-file exclusions) is
