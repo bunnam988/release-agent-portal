@@ -34,3 +34,8 @@ cnap-secret.yaml
 deploy-credentials/gerrit.netrc
 deploy-credentials/gh-hosts.yml
 deploy-credentials/opencode-auth.json
+
+# Real secret values staged here for one-time upload into xVault (see
+# cnap-webservice.yaml's serviceClaims) -- never commit these.
+deploy-credentials/*.json
+deploy-credentials/*.txt

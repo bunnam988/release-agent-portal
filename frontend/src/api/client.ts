@@ -35,7 +35,7 @@ export interface MessagePart {
   type: string
   text?: string
   tool?: string
-  state?: { status?: string }
+  state?: { status?: string; input?: { command?: string }; output?: string }
   [key: string]: unknown
 }
 

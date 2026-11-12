@@ -26,8 +26,10 @@ Given one or more Jira ticket keys, this skill:
 1. Walks all linked/dependent tickets and sub-tasks (excluding CATR-* and "triage" titles)
 2. Finds `rdkjenkins03` MERGED comments on `*_sprint` or `develop` branches only
 3. Verifies each Gerrit is actually MERGED via the API
-4. Groups by repository — cherry-picks all; squashes if multiple per repo
-5. Enforces required commit message fields, pushes for review, sets a Gerrit topic
+4. Skips any change already cherry-picked to the target branch (same `Change-Id` already
+   exists there) instead of cherry-picking it again
+5. Groups remaining changes by repository — cherry-picks all; squashes if multiple per repo
+6. Enforces required commit message fields, pushes for review, sets a Gerrit topic
 
 Jira key rule (generic, not RDK-only): `[A-Z0-9]+-\d+`
 - Examples that MUST be accepted: `XB10-2860`, `CBR2-1234`, `RDKB-64184`
@@ -76,8 +78,10 @@ Copy this checklist and track progress:
 - [ ] Step 2: Fetch and filter Jira tickets
 - [ ] Step 3: Scan comments and collect Gerrits
 - [ ] Step 4: Verify Gerrit status
+- [ ] Step 4b: Skip changes already cherry-picked to the target branch
 - [ ] Step 5: Cherry-pick and squash per repo
 - [ ] Step 5a: Optionally prepare meta-rdk-broadband srcrev/pkgrev update
+- [ ] Step 5h: Optionally prepare meta-rdk-comcast-broadband (GDCS) srcrev/pkgrev update
 - [ ] Step 6: Push and set topic
 
 ---
@@ -99,6 +103,11 @@ Optional prepared inputs from upstream stable2 sync skills:
 - `stable2_srcrev_updates.yaml`
 - Prepared workspace: `{meta_sync_workspace}/meta-rdk-broadband`
 - Prepared workspace branch: `meta_support_branch` from `config.yaml` (for example `stable2`)
+- Prepared GDCS workspace (if GDCS scope was processed upstream):
+  `{meta_sync_workspace}/meta-rdk-comcast-broadband`
+- Prepared GDCS workspace branch: `mesh_meta_support_branch` from `config.yaml`
+  (see Step 5h) — a separate Gerrit project (`mesh_gerrit_repo`) from the one above,
+  not an alternate branch of the same repo
 
 ---
 
@@ -163,9 +172,48 @@ for gid, (project, branch) in gerrit_map.items():
 
 ---
 
+### Step 4b — Skip changes already cherry-picked to the target branch
+
+Before cherry-picking, check whether each surviving change was already
+cherry-picked onto `{target_branch}` in an earlier run (a previous
+cherry-pick cycle, or a manual cherry-pick) — its own Gerrit change
+already exists there under the same `Change-Id`, just on a different
+branch:
+
+```bash
+curl -s "{GERRIT_BASE}/changes/{ID}?o=CURRENT_REVISION"
+```
+
+Read that change's `change_id` field (the `I<sha1>` value, not the
+numeric `{ID}`), then query for it on the target branch:
+
+```bash
+curl -s "{GERRIT_BASE}/changes/?q=change:{change_id}+branch:{target_branch}"
+```
+
+Strip `)]}'\n` prefix before parsing, same as Step 4.
+
+- If this returns **any** result — status `NEW`, `MERGED`, or `ABANDONED`
+  all count, any of them means a change already exists there — this
+  source change has already been cherry-picked to `{target_branch}`:
+  - Remove it from this repo's cherry-pick set before Step 5 runs
+  - Do NOT create a new cherry-pick/Gerrit change for it
+  - Record it as **already present** (existing target-branch change
+    number + its status), not as a new push, in the final report
+- If the query returns nothing, keep this change in the set and proceed
+  to Step 5 as normal.
+
+If **every** surviving change for a repo turns out to already be present
+on `{target_branch}`, skip Step 5 entirely for that repo and report it as
+"already up to date — no new cherry-pick needed."
+
+---
+
 ### Step 5 — Cherry-pick and squash per repo
 
-Run all repos in parallel (use subagents). For each repo:
+Run all repos in parallel (use subagents). For each repo, using only the
+changes that survived Step 4b (i.e. excluding anything already present on
+`{target_branch}`):
 
 #### 5a. Check/create target branch
 
@@ -278,6 +326,42 @@ Rules:
 - Do NOT add the `Sync-Ticket:` field to any other commit — only this meta-layer one (see rule above)
 - If no prepared meta-layer changes exist, skip this step silently
 
+#### 5h. Optional meta-rdk-comcast-broadband (GDCS) update (MINIMAL EXTENSION)
+
+Same shape as Step 5g, for the SEPARATE GDCS meta-layer — do NOT merge this
+into Step 5g's commit, workspace, or Gerrit change. Only add this step if
+upstream GDCS artifacts/workspace exist.
+
+If the following exist:
+- `stable2_srcrev_updates.yaml` contains at least one entry with `meta: "gdcs"`
+- prepared workspace `{meta_sync_workspace}/meta-rdk-comcast-broadband`
+
+Then include one additional Gerrit change, pushed to `{mesh_gerrit_repo}`
+(NOT `{gerrit_repo}`):
+
+1. Use the prepared workspace on configured `mesh_meta_support_branch`
+2. Verify only intended files are modified:
+   - `{mesh_srcrev_file}` (today `conf/include/generic-srcrev.inc`)
+   - `{mesh_pkgrev_file}` (today `conf/include/generic-pkgrev.inc`) — only
+     present if a `tag_eligible: true` GDCS repo (today cujo-ni/cujo-fpingdq)
+     was processed upstream; most GDCS runs touch SRCREV only
+3. Stage whichever of those files actually changed
+4. Create ONE squashed commit for all GDCS meta-layer changes
+5. Same `Sync-Ticket: {topic}` rule as Step 5g applies here too, independently
+6. Push that commit to `{mesh_gerrit_repo}` using the SAME topic as every
+   other change in this run (core-nw repos, the Step 5g meta-rdk-broadband
+   change, and this one all share one Gerrit topic)
+
+Rules:
+- This is one extra repo-level Gerrit change under the same shared topic,
+  pushed to a different Gerrit project than Step 5g's — never combine the
+  two meta-layer changes into one commit/push even though they share a topic
+- Do NOT change how non-meta or core-nw-meta (Step 5g) repos are handled
+- Gerrit credentials (`~/.netrc`) are the same for both `{gerrit_repo}` and
+  `{mesh_gerrit_repo}` — no GitHub identity switch applies here, this step
+  only touches Gerrit
+- If no prepared GDCS meta-layer changes exist, skip this step silently
+
 ---
 
 ### Step 6 — Set Gerrit topic
@@ -346,4 +430,5 @@ After completing a run, record results in this format for the session doc:
 | New Gerrit | Repository | Source(s) | Target Branch | Notes |
 |---|---|---|---|---|
 | [NNNNNN](https://gerrit.teamccp.com/NNNNNN) | `repo-name` | 123456 | `branch` | Single/Squashed/Conflict resolved |
+| (already present) | `repo-name` | 123457 | `branch` | Already cherry-picked — existing change [MMMMMM](https://gerrit.teamccp.com/MMMMMM) (status), skipped |
 ```

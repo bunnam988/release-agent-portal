@@ -88,8 +88,8 @@ If `--test-repo`: only include PRs from the 6 allowlisted repos.
 ### Step 4 — Interpret results
 
 - Each row is a unique PR (deduplicated by URL).
-- The `ticket` column shows which Jira ticket the PR was linked to and how it was reached (subtask, dependency link type and direction).
-- Tickets marked `[EXCLUDED: is user story]` were found as dependencies but skipped because they have subtasks of their own.
+- The `ticket` column shows which Jira ticket the PR was linked to and how it was reached (root, subtask, dependency link type and direction).
+- Every reached ticket is checked for its own PRs, whether it's a bug or a user story, and whether or not it has subtasks of its own -- a dependency ticket's own PRs and its subtasks' PRs are both collected.
 
 ### Step 5 — Report results
 
@@ -150,7 +150,26 @@ prs:
     merge_commit_sha: "fedcba9876543210fedcba9876543210fedcba98"
 ```
 
-Before saving `pr_list.yaml`, enrich each PR with GitHub metadata:
+Before saving `pr_list.yaml`, enrich each PR with GitHub metadata. This is the
+only step in this skill that calls GitHub directly (everything else is pure
+Jira REST via `scripts/fetch_prs.py`), and the discovered PRs can belong to
+either the `rdkcentral` org or the `rdk-gdcs` (GDCS) org — switch identity
+per repo before each call, same rule `on-demand-cherry-pick.md`'s "GitHub
+Identity — Per-Repo Org Switch" section and `track-for-stable2`'s own copy
+of it already use:
+- Mesh org name = `github_org` from `config/tracked_repos_gdcs_stable2.yaml`
+  (today: `rdk-gdcs`).
+- Record `{default_gh_user}` once before the first enrichment call (`gh auth
+  status --hostname github.com`, the account with `Active account: true`).
+- Before each `gh pr view` call: if that PR's repo owner is the Mesh org,
+  switch to `$GH_MESH_USER` (STOP if unset) and verify with `gh auth
+  status`; otherwise ensure `{default_gh_user}` is active.
+- SSO gotcha: a 404 on an `rdk-gdcs` repo even with `GH_MESH_USER` active
+  means the token needs SSO authorization for `comcast-global`, not that
+  the repo/PR is missing.
+- Restore `{default_gh_user}` before this skill finishes, regardless of
+  outcome.
+
 ```bash
 gh pr view <number> --repo <org>/<repo> \
   --json mergeCommit,baseRefName \
@@ -198,7 +217,13 @@ Next Steps:
 
 - `CATR-*` project tickets
 - Link types: `Cloner`, `Clonee`, `Testing`, `Release Container`, `Gantt`, `Gantt: start-finish`, `Key Requirements`
-- Any linked ticket that **has subtasks** — treated as a user story; not recursed into
+
+Every other ticket reached by the traversal (the root ticket, its subtasks,
+and every linked dependency ticket, recursively) is checked for its own
+PRs regardless of issue type (bug or user story) or whether it itself has
+subtasks -- there is no type-based skip. This keeps GitHub PR discovery in
+parity with `gerrit-cherrypick-squash`'s Gerrit-side traversal, which
+likewise checks every non-excluded ticket it reaches.
 
 ### PR filter
 

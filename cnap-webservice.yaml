@@ -1,22 +1,55 @@
-# No serviceClaims / no Secret manifest needed for this deployment
-# approach -- all credentials (GitHub/Gerrit/Jira/Copilot files, plus
-# portal passwords/session secret/git identity) are baked into the
-# image at build time instead (see deploy-credentials/README.md and
-# DESIGN.md "Credential status" for the accepted trade-off). This
-# mirrors a teammate's own working CNAP deployment pattern
-# (jira_autotriage), after the serviceClaims/servicebinding.io path hit
-# real, unresolved friction in a live deployment attempt
-# (APPLICATION_INVALID_SECRET_REF, plus an unconfirmed mount-path
-# question) -- cnap-secret.yaml.template is kept in the repo as a
-# reference for reverting to the more-secure approach later, but is not
-# used by this manifest.
+# Secrets now come from Comcast xVault via serviceClaims (see the
+# serviceClaims block below) -- NOT baked into the image anymore. The
+# old baked-in-credential approach (deploy-credentials/, still present
+# as a local-dev-only fallback -- see docker-entrypoint.sh's priority
+# order) replaced an EARLIER serviceClaims attempt that hit
+# APPLICATION_INVALID_SECRET_REF in a live deployment -- that one bound
+# a plain Kubernetes Secret directly via secretKeyRef.name (CNAP's
+# controller actually generates an intermediate <webservice>-<claim>-
+# bind secret that needs to be referenced instead -- see
+# cnap-secret.yaml.template's header for the fuller diagnosis). xVault's
+# serviceClaims binds a Vault PATH instead of a Kubernetes Secret at all
+# (confirmed against cnap.comcast.net/cnap -> Microservices Journey ->
+# Advanced Topics -> Bind Vault Secret) -- a different, more directly
+# documented mechanism, not a retry of the same broken reference.
+#
+# ONLY ONE serviceClaim below, deliberately: CNAP's WebService controller
+# has a confirmed platform bug where EVERY serviceClaim fails with
+# `_|_ // field not allowed (bottom kind)` the moment a WebService has 2
+# or more of them (reproduced 3x, across 2 separate resource instances,
+# with and without a kv2/ path prefix -- always fails the same way with
+# 2 claims, always succeeds with 1). Escalated to #CNAP; not fixable from
+# this manifest. Workaround: the 4 credential FILES that used to be a
+# second "release-agent-portal-files" / servicebinding.io claim now live
+# as 4 extra keys (*_CONTENT, holding each file's whole content) inside
+# this SAME xVault path -- the single "env"-type claim below already
+# injects every key present at that path as a container env var, so no
+# manifest change is needed when new keys are added there. See
+# docker-entrypoint.sh's _maybe_use_credential for where those env vars
+# get written back out to the actual file paths this app expects.
 #
 # Schema confirmed against cnap.comcast.net/cnap (Microservices Journey ->
-# Advanced Topics -> API Reference -> WebService, and -> Sample Manifest)
-# -- not guessed. Still one open item: no dedicated persistent-volume
-# concept was found for a plain WebService (see DESIGN.md "Data Storage"
-# -- /workspace/.stable2-meta-sync needs to survive pod restarts). Ask
-# directly rather than assume ephemeral storage is fine.
+# Advanced Topics -> API Reference -> WebService, Bind Vault Secret, and
+# Resources pages) -- not guessed.
+#
+# ACCEPTED RISK (deliberate, revisit later -- see DESIGN.md "Data
+# Storage" and "Open items" for the full detail): NO PERSISTENT VOLUME of
+# any kind is mounted below. Checked CNAP's docs specifically for this
+# (Microservices Journey -> Advanced Topics -> Data Services is a
+# managed-database binding, not a raw filesystem volume for a
+# `WebService`) -- no PVC/volume-mount mechanism was found there at all.
+# Locally (docker-compose.yml), three things are on named Docker volumes
+# -- /workspace/.run-state (last_run.txt + every stable2_*/pr_list.yaml
+# intermediate file), /workspace/.stable2-meta-sync, and
+# ~/.local/share/opencode (opencode's own session-history SQLite DB, i.e.
+# the portal's entire History page) -- none of which carries over here.
+# Every pod restart in this real deployment wipes all of it. Deploying
+# anyway with this known, accepted -- revisit by asking the #CNAP team
+# directly whether a raw PVC/volume mount is possible for a `WebService`
+# at all (not found in their public docs); if not, writing this state to
+# a CNAP-managed Data Service instead would need real code changes, not
+# just a manifest change.
+#
 # Renamed from "release-agent-portal" to "rdkb-middleware-release-agent"
 # per manager feedback -- the old name was too generic. This changes the
 # resulting URL (was release-agent-portal.web.cnap.comcast.net). IMPORTANT:
@@ -86,3 +119,43 @@ spec:
   autoscale:
     min: 1
     max: 1
+
+  # Default CNAP limits (500m CPU / 2Gi memory) are not tuned for this
+  # app -- raised here after confirming the host running this locally had
+  # only ~3.8GB total RAM with nothing capped at all, and a heavy "all
+  # components" main-tagging run is exactly the kind of workload that can
+  # exhaust it. Mirrors docker-compose.yml's local 3g/768m safety net.
+  # Revisit if a real multi-component run still gets OOM-killed at this
+  # limit -- see docker-entrypoint.sh's per-process supervisor, which
+  # turns a single OOM-killed process into an in-place restart instead of
+  # the whole pod going down, but can't raise the ceiling itself.
+  resources:
+    limits:
+      cpu: "1"
+      memory: "3Gi"
+    requests:
+      cpu: "0.5"
+      memory: "768Mi"
+
+  # Comcast xVault, not baked-in files (see deploy-credentials/README.md
+  # for the fallback this replaces). Confirmed schema (cnap.comcast.net/cnap
+  # -> Microservices Journey -> Advanced Topics -> Bind Vault Secret):
+  # `service.path` is a Vault path, not a Kubernetes Secret name --
+  # `type: env` injects every key present at that path as a container
+  # env var directly. See docker-entrypoint.sh's _maybe_use_credential
+  # for how the 4 *_CONTENT keys (whole file contents, not single
+  # values) get written back out to the actual file paths this app
+  # expects (/workspace/ccp_jira.env, /root/.netrc, etc).
+  #
+  # This path is real (`rdkb-corenw` is the confirmed xVault namespace
+  # for this app -- coordinated with the #CNAP team). Populate/update
+  # values directly in the xVault UI (https://portal.xvault.comcast.com/)
+  # -- CNAP only reads from there, it never creates or edits secret
+  # content.
+  serviceClaims:
+    - name: release-agent-portal-config
+      service:
+        provider: xVault
+        path: kv2/rdkb-corenw/devx/cnap/release-agent-portal-config
+        rootVaultNamespace: false
+      type: env

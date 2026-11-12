@@ -1,0 +1,40 @@
+# Static, manually-maintained list of GDCS (rdk-gdcs org) components included
+# in the FULL stable2 pipeline -- distinct from both:
+#   - config/tracked_repos.yaml   (41 core-nw/rdkcentral repos, meta-rdk-broadband)
+#   - config/mesh_components.yaml (15 Mesh Components repos, PR-based release,
+#     a completely separate pipeline -- see DESIGN.md "Mesh Components release
+#     support". That pipeline is unrelated to this file.)
+#
+# Resolved from meta-rdk-comcast-broadband's generic-srcrev.inc (same parsing
+# rules as specs/srcrev-parsing.md, just a different Gerrit project/branch).
+#
+# Most GDCS stable2 components are SRCREV-only: cherry-pick + SRCREV update,
+# no GitHub tag/release, no PKGREV entry. Only `tag_eligible: true` repos also
+# get the full core-nw-style tag + PKGREV + SRCREV treatment.
+#
+# THIS FILE IS NOT AUTO-SYNCED. If a new GDCS stable2 component is added,
+# add it here manually.
+
+resolved_at: "2026-10-28"
+resolved_from:
+  gerrit_repo: "rdk/yocto_oe/layers/meta-rdk-comcast-broadband"
+  file: "conf/include/generic-srcrev.inc"
+
+github_org: "rdk-gdcs"
+
+repos:
+  - url: "https://github.com/rdk-gdcs/sysinit-broadband-cpc"
+    components: ["sysint-cpc"]
+    tag_eligible: false
+  - url: "https://github.com/rdk-gdcs/rdkb_common_utils"
+    components: ["rdkb-common-utils"]
+    tag_eligible: false
+  - url: "https://github.com/rdk-gdcs/firewall"
+    components: ["firewall-src"]
+    tag_eligible: false
+  - url: "https://github.com/rdk-gdcs/apparmor-profiles"
+    components: ["apparmor_profiles"]
+    tag_eligible: false
+  - url: "https://github.com/rdk-gdcs/cujo-qoo-module"
+    components: ["cujo-ni", "cujo-fpingdq"]
+    tag_eligible: true

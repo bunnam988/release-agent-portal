@@ -331,32 +331,39 @@ clone directory left behind by this skill.
 
 ## Step 9 — Final Report
 
-Print a summary:
+This is the true end of the run — emit AGENTS.md's `===RESULT===` block
+(not the old free-text divider format) so the portal renders a clean
+status/summary/table instead of a wall of plain text. Use a real markdown
+pipe table (header row, a `---` separator row, then data rows) for
+`TABLE:`, not the old ASCII-divider style:
+
 ```
-─────────────────────────────────────────────
-/main-tagging complete
-Date range:    {start_dt} → {end_dt}
-Components:    {N} processed, {X} skipped (no GitHub URL — see tracked_repos.yaml unresolved_components)
-Commits found: {M} total across all components
-Jiras found:   {K} unique Jira IDs resolved
-Carry-forward: {P} Jiras from previous cycle
-Sheet created: {sheet_name} in open_source_commits_monitor.xlsx
-─────────────────────────────────────────────
+===RESULT===
+STATUS: success
+SUMMARY: Scanned {N} components from {start_dt} to {end_dt} — {M} commits
+resolved to {K} unique Jira IDs ({P} carried forward from the previous
+cycle). Saved to sheet {sheet_name} in open_source_commits_monitor.xlsx.
+TABLE:
+| Component | PR # | Commit SHA | Date | Issue |
+| --- | --- | --- | --- | --- |
+| {component} | #{pr} | {sha} | {date} | No Jira ID found |
+| {jira_id's component} | #{pr} | {sha} | {date} | Jira {jira_id} could not be resolved |
+DETAILS:
+- Components skipped (no GitHub URL): {X} — see tracked_repos.yaml unresolved_components
+NEXT_STEPS:
+- Review the unresolved rows above before running the stable2 pipeline
+===END RESULT===
 ```
 
-If any commits had no Jira ID found, print:
-```
-Commits with no Jira ID:
-Component       | PR #  | Commit SHA | Date
-──────────────────────────────────────────
-{component}     | #{pr} | {sha}      | {date}
-```
-
-If any Jira IDs could not be resolved, print:
-```
-Jira IDs that could not be resolved:
-{jira_id} — Component: {component}, PR: #{pr}
-```
+Rules for this block:
+- Omit the entire `TABLE:` section if there were no no-Jira commits and no
+  unresolved Jira IDs — don't force an empty/placeholder table.
+- Set `STATUS: partial` instead of `success` if any commits had no Jira ID
+  found, any Jira IDs couldn't be resolved, or any components were skipped
+  for having no GitHub URL — `success` is only for a fully clean run.
+- Omit `DETAILS:` entirely if nothing was skipped.
+- Omit `NEXT_STEPS:` entirely if the table above is empty (nothing for the
+  user to review).
 
 ## Step 10 — Main Branch Tagging (moved out of this skill)
 
